@@ -1,0 +1,5712 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "CUSA SSO API",
+    "version": "1.4.0",
+    "description": "Custom first-party SSO: Authorization Code + PKCE S256, opaque tokens, application-scoped roles. Not a full OAuth/OIDC provider; no discovery, ID token, refresh token or dynamic registration. Examples are placeholders; never paste production secrets into browser documentation."
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "Same origin as this documentation; production uses HTTPS"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Authorization"
+    },
+    {
+      "name": "Tokens"
+    },
+    {
+      "name": "Identity"
+    },
+    {
+      "name": "Consent"
+    }
+  ],
+  "paths": {
+    "/api/sso/authorize": {
+      "get": {
+        "operationId": "authorize",
+        "summary": "เริ่มเข้าสู่ระบบ Service",
+        "description": "Browser navigation หลัง BFF สร้างและเก็บ state/verifier ใน server session; code มีอายุ 90 วินาที ใช้ครั้งเดียว ต้องมีสมาชิกและ Role ของ Service และอนุมัติรายการข้อมูลก่อนออก code; Service ที่เปิดคิวอาจส่งไป /waiting ก่อน Google/MFA ห้ามเพิ่มพารามิเตอร์นอกสัญญา คิวไม่แทนการตรวจสิทธิ์หรือ PKCE",
+        "tags": [
+          "Authorization"
+        ],
+        "security": [],
+        "parameters": [
+          {
+            "name": "response_type",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "code"
+              ]
+            },
+            "description": "Authorization Code grant เท่านั้น"
+          },
+          {
+            "name": "client_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Application ID จากหน้า Applications ไม่ใช่ Google Client ID"
+          },
+          {
+            "name": "redirect_uri",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uri",
+              "maxLength": 2048
+            },
+            "description": "Callback ต้องตรงกับที่ลงทะเบียนทุกตัวอักษร"
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{32,128}$"
+            },
+            "description": "CSPRNG อย่างน้อย 32 bytes ผูกกับ BFF session และใช้ครั้งเดียว"
+          },
+          {
+            "name": "code_challenge",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Opaque credential: CSPRNG 32 bytes, base64url without padding",
+              "pattern": "^[A-Za-z0-9_-]{43}$"
+            },
+            "description": "BASE64URL(SHA256(verifier)) ไม่มี = padding"
+          },
+          {
+            "name": "code_challenge_method",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "S256"
+              ]
+            },
+            "description": "ไม่รองรับ plain"
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "identity:read profile email",
+              "maxLength": 255
+            },
+            "description": "Space-separated requested claim scopes. Must include identity:read, be unique, and be permitted by the registered service policy. User may decline optional scopes."
+          }
+        ],
+        "responses": {
+          "303": {
+            "description": "Redirect to login, service enrollment or consent as required; code only after explicit approval.",
+            "headers": {
+              "Location": {
+                "schema": {
+                  "type": "string",
+                  "format": "uri-reference"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation / invalid grant",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid request parameters",
+                  "code": "invalid_request"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, expired or revoked credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid or expired API key",
+                  "code": "invalid_client"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Insufficient scope / CORS / account access",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "API key does not permit this operation",
+                  "code": "insufficient_scope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found in the permitted scope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Resource not found",
+                  "code": "NOT_FOUND"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Policy version or activity identifier conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Reload the current policy or use the correct event identifier",
+                  "code": "CONFLICT"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Quota exceeded; respect Retry-After",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Service request quota exceeded",
+                  "code": "RATE_LIMITED"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "เวลารอเป็นวินาที ห้าม retry รัว",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Dependency or audit unavailable; fail closed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Service unavailable",
+                  "code": "AUDIT_UNAVAILABLE"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Unable to process request",
+                  "code": "INTERNAL_ERROR"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sso/login-context": {
+      "get": {
+        "operationId": "loginContext",
+        "summary": "อ่านบริบทหน้าเข้าสู่ระบบ",
+        "description": "ใช้โดยหน้า Login ของ CUSA SSO; ผู้เชื่อมต่อทั่วไปเริ่มที่ authorize ได้เลย ไม่ออก token/code",
+        "tags": [
+          "Authorization"
+        ],
+        "security": [],
+        "parameters": [
+          {
+            "name": "response_type",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "code"
+              ]
+            },
+            "description": "Authorization Code grant เท่านั้น"
+          },
+          {
+            "name": "client_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Application ID จากหน้า Applications ไม่ใช่ Google Client ID"
+          },
+          {
+            "name": "redirect_uri",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uri",
+              "maxLength": 2048
+            },
+            "description": "Callback ต้องตรงกับที่ลงทะเบียนทุกตัวอักษร"
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{32,128}$"
+            },
+            "description": "CSPRNG อย่างน้อย 32 bytes ผูกกับ BFF session และใช้ครั้งเดียว"
+          },
+          {
+            "name": "code_challenge",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Opaque credential: CSPRNG 32 bytes, base64url without padding",
+              "pattern": "^[A-Za-z0-9_-]{43}$"
+            },
+            "description": "BASE64URL(SHA256(verifier)) ไม่มี = padding"
+          },
+          {
+            "name": "code_challenge_method",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "S256"
+              ]
+            },
+            "description": "ไม่รองรับ plain"
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "identity:read profile email",
+              "maxLength": 255
+            },
+            "description": "Space-separated requested claim scopes. Must include identity:read, be unique, and be permitted by the registered service policy. User may decline optional scopes."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginContext"
+                },
+                "example": {
+                  "application": {
+                    "name": "Member Portal",
+                    "origin": "https://portal.example.com"
+                  },
+                  "returnTo": "/api/sso/authorize?..."
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation / invalid grant",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid request parameters",
+                  "code": "invalid_request"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, expired or revoked credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid or expired API key",
+                  "code": "invalid_client"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Insufficient scope / CORS / account access",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "API key does not permit this operation",
+                  "code": "insufficient_scope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found in the permitted scope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Resource not found",
+                  "code": "NOT_FOUND"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Policy version or activity identifier conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Reload the current policy or use the correct event identifier",
+                  "code": "CONFLICT"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Quota exceeded; respect Retry-After",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Service request quota exceeded",
+                  "code": "RATE_LIMITED"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "เวลารอเป็นวินาที ห้าม retry รัว",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Dependency or audit unavailable; fail closed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Service unavailable",
+                  "code": "AUDIT_UNAVAILABLE"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Unable to process request",
+                  "code": "INTERNAL_ERROR"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sso/token": {
+      "post": {
+        "operationId": "exchangeCode",
+        "summary": "แลก authorization code",
+        "description": "เรียกจาก BFF เท่านั้น ต้องมี identity:read และ callback/verifier เดิม ไม่รองรับ refresh_token/password/client_credentials; อย่า retry code เดิมเมื่อไม่ทราบผลการแลก",
+        "tags": [
+          "Tokens"
+        ],
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExchangeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenResponse"
+                },
+                "example": {
+                  "access_token": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                  "token_type": "Bearer",
+                  "expires_in": 300,
+                  "scope": "identity:read profile email"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation / invalid grant",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid request parameters",
+                  "code": "invalid_request"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, expired or revoked credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid or expired API key",
+                  "code": "invalid_client"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Insufficient scope / CORS / account access",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "API key does not permit this operation",
+                  "code": "insufficient_scope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found in the permitted scope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Resource not found",
+                  "code": "NOT_FOUND"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Policy version or activity identifier conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Reload the current policy or use the correct event identifier",
+                  "code": "CONFLICT"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Quota exceeded; respect Retry-After",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Service request quota exceeded",
+                  "code": "RATE_LIMITED"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "เวลารอเป็นวินาที ห้าม retry รัว",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Dependency or audit unavailable; fail closed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Service unavailable",
+                  "code": "AUDIT_UNAVAILABLE"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Unable to process request",
+                  "code": "INTERNAL_ERROR"
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "curl",
+            "source": "curl --request POST \"$SSO_ORIGIN/api/sso/token\" \\\n  --header 'Content-Type: application/json' \\\n  --header \"X-API-Key: $SSO_API_KEY\" \\\n  --data '{\"grant_type\":\"authorization_code\",\"code\":\"<CODE>\",\"redirect_uri\":\"https://portal.example.com/auth/callback\",\"code_verifier\":\"<ORIGINAL_VERIFIER>\"}'"
+          }
+        ]
+      }
+    },
+    "/api/sso/introspect": {
+      "post": {
+        "operationId": "introspectToken",
+        "summary": "ตรวจ token ก่อน protected operation",
+        "description": "ต้องมี token:introspect ตรวจได้เฉพาะ token ของ application เดียวกัน HTTP 200 ไม่เท่ากับ authenticated ต้องตรวจ active, aud, exp และ roles; identity cache สูงสุด 5 วินาที",
+        "tags": [
+          "Tokens"
+        ],
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IntrospectionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Active identity หรือ inactive ไม่มีข้อมูลผู้ใช้",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/ActiveToken"
+                    },
+                    {
+                      "$ref": "#/components/schemas/InactiveToken"
+                    }
+                  ]
+                },
+                "examples": {
+                  "active": {
+                    "value": {
+                      "sub": "11111111-1111-4111-8111-111111111111",
+                      "email": "member@example.com",
+                      "name": "Example Member",
+                      "given_name": "Example",
+                      "family_name": "Member",
+                      "department": "ฝ่ายสมาชิก",
+                      "roles": [
+                        "viewer",
+                        "approver"
+                      ],
+                      "aud": "22222222-2222-4222-8222-222222222222",
+                      "active": true,
+                      "exp": 2000000000,
+                      "scope": "identity:read profile email"
+                    }
+                  },
+                  "inactive": {
+                    "value": {
+                      "active": false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation / invalid grant",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid request parameters",
+                  "code": "invalid_request"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, expired or revoked credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid or expired API key",
+                  "code": "invalid_client"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Insufficient scope / CORS / account access",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "API key does not permit this operation",
+                  "code": "insufficient_scope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found in the permitted scope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Resource not found",
+                  "code": "NOT_FOUND"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Policy version or activity identifier conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Reload the current policy or use the correct event identifier",
+                  "code": "CONFLICT"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Quota exceeded; respect Retry-After",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Service request quota exceeded",
+                  "code": "RATE_LIMITED"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "เวลารอเป็นวินาที ห้าม retry รัว",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Dependency or audit unavailable; fail closed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Service unavailable",
+                  "code": "AUDIT_UNAVAILABLE"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Unable to process request",
+                  "code": "INTERNAL_ERROR"
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "curl",
+            "source": "curl --request POST \"$SSO_ORIGIN/api/sso/introspect\" \\\n  --header 'Content-Type: application/json' \\\n  --header \"X-API-Key: $SSO_API_KEY\" \\\n  --data '{\"token\":\"<ACCESS_TOKEN>\"}'"
+          }
+        ]
+      }
+    },
+    "/api/sso/userinfo": {
+      "get": {
+        "operationId": "userInfo",
+        "summary": "อ่านข้อมูลโปรไฟล์ของ token",
+        "description": "Bearer access token; หากส่ง Origin ต้องตรงกับ origin ของ application เจ้าของ token ไม่มี wildcard/credentials CORS ระบบ BFF ควรเรียกผ่าน backend Returns only consented claims. Evidence, Google/LINE access tokens, phone hashes and MFA secrets are never returned.",
+        "tags": [
+          "Identity"
+        ],
+        "security": [
+          {
+            "BearerToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "Origin",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uri"
+            },
+            "description": "Browser origin; ต้องตรงกับ origin ของ registered callback"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Profile"
+                },
+                "example": {
+                  "sub": "11111111-1111-4111-8111-111111111111",
+                  "email": "member@example.com",
+                  "name": "Example Member",
+                  "given_name": "Example",
+                  "family_name": "Member",
+                  "department": "ฝ่ายสมาชิก",
+                  "roles": [
+                    "viewer",
+                    "approver"
+                  ],
+                  "aud": "22222222-2222-4222-8222-222222222222",
+                  "email_verified": true,
+                  "scope": "identity:read profile email",
+                  "picture": null
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation / invalid grant",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid request parameters",
+                  "code": "invalid_request"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid/expired access token; WWW-Authenticate: Bearer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Valid, active bearer access token required",
+                  "code": "invalid_token"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Insufficient scope / CORS / account access",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "API key does not permit this operation",
+                  "code": "insufficient_scope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found in the permitted scope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Resource not found",
+                  "code": "NOT_FOUND"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Policy version or activity identifier conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Reload the current policy or use the correct event identifier",
+                  "code": "CONFLICT"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Quota exceeded; respect Retry-After",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Service request quota exceeded",
+                  "code": "RATE_LIMITED"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "เวลารอเป็นวินาที ห้าม retry รัว",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Dependency or audit unavailable; fail closed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Service unavailable",
+                  "code": "AUDIT_UNAVAILABLE"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Unable to process request",
+                  "code": "INTERNAL_ERROR"
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "curl",
+            "source": "curl \"$SSO_ORIGIN/api/sso/userinfo\" \\\n  --header \"Authorization: Bearer $ACCESS_TOKEN\""
+          }
+        ]
+      },
+      "options": {
+        "operationId": "userInfoPreflight",
+        "summary": "CORS preflight ของ userinfo",
+        "description": "อนุญาต GET และ Authorization header จาก registered origin เท่านั้น",
+        "tags": [
+          "Identity"
+        ],
+        "security": [],
+        "parameters": [
+          {
+            "name": "Origin",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Origin ของ callback ที่ลงทะเบียน"
+          },
+          {
+            "name": "Access-Control-Request-Method",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "GET"
+          },
+          {
+            "name": "Access-Control-Request-Headers",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Authorization ถ้ามี"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Preflight accepted; Access-Control-Allow-Origin เป็น origin ที่ตรวจแล้ว"
+          },
+          "400": {
+            "description": "Validation / invalid grant",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid request parameters",
+                  "code": "invalid_request"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, expired or revoked credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid or expired API key",
+                  "code": "invalid_client"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Insufficient scope / CORS / account access",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "API key does not permit this operation",
+                  "code": "insufficient_scope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found in the permitted scope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Resource not found",
+                  "code": "NOT_FOUND"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Policy version or activity identifier conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Reload the current policy or use the correct event identifier",
+                  "code": "CONFLICT"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Quota exceeded; respect Retry-After",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Service request quota exceeded",
+                  "code": "RATE_LIMITED"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "เวลารอเป็นวินาที ห้าม retry รัว",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Dependency or audit unavailable; fail closed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Service unavailable",
+                  "code": "AUDIT_UNAVAILABLE"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Unable to process request",
+                  "code": "INTERNAL_ERROR"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sso/revoke": {
+      "post": {
+        "operationId": "revokeServiceSession",
+        "summary": "ถอน Token ของเซสชันเฉพาะ Service ของคุณ",
+        "description": "BFF ใช้ API key ที่มี token:revoke ส่ง access token ที่ถืออยู่ ระบบถอน access tokens และ authorization codes ของ session เดียวกันเฉพาะ application ของคีย์ ไม่ลบ SSO session ไม่กระทบ Service อื่น ไม่ห้าม login ใหม่ Unknown/cross-app token ตอบ ok เหมือนกัน; cache เดิมอาจมีผลไม่เกิน 5 วินาที ต้องทำลาย BFF session และล้าง cache ของตัวเองด้วย",
+        "tags": [
+          "Tokens"
+        ],
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IntrospectionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "ok"
+                  ],
+                  "additionalProperties": false
+                },
+                "example": {
+                  "ok": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation / invalid grant",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid request parameters",
+                  "code": "invalid_request"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, expired or revoked credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid or expired API key",
+                  "code": "invalid_client"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Insufficient scope / CORS / account access",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "API key does not permit this operation",
+                  "code": "insufficient_scope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found in the permitted scope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Resource not found",
+                  "code": "NOT_FOUND"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Policy version or activity identifier conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Reload the current policy or use the correct event identifier",
+                  "code": "CONFLICT"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Quota exceeded; respect Retry-After",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Service request quota exceeded",
+                  "code": "RATE_LIMITED"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "เวลารอเป็นวินาที ห้าม retry รัว",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Dependency or audit unavailable; fail closed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Service unavailable",
+                  "code": "AUDIT_UNAVAILABLE"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Unable to process request",
+                  "code": "INTERNAL_ERROR"
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "curl",
+            "source": "curl --request POST \"$SSO_ORIGIN/api/sso/revoke\" \\\n  --header 'Content-Type: application/json' \\\n  --header \"X-API-Key: $SSO_API_KEY\" \\\n  --data '{\"token\":\"<ACCESS_TOKEN>\"}'"
+          }
+        ]
+      }
+    },
+    "/api/sso/phone-match": {
+      "post": {
+        "operationId": "matchPhone",
+        "summary": "ตรวจเบอร์ที่ระบบลูกได้รับว่าตรงกับบัญชีนี้หรือไม่",
+        "description": "Server-to-server only. Requires application API key with identity:read plus an active token consented for phone:match in the same application. Accepts Thai mobile or E.164. Up to 5 attempts/token/application/minute, plus service quotas. No arbitrary user lookup; response never includes phone number. No cache. Unverified returns match:null. Mismatch does not establish fraud or justify merging accounts.",
+        "tags": [
+          "Identity"
+        ],
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "token": {
+                    "type": "string",
+                    "description": "Opaque credential: CSPRNG 32 bytes, base64url without padding",
+                    "pattern": "^[A-Za-z0-9_-]{43}$"
+                  },
+                  "phone_number": {
+                    "type": "string",
+                    "description": "Phone submitted to your own service; never put in query string",
+                    "maxLength": 40
+                  }
+                },
+                "required": [
+                  "token",
+                  "phone_number"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "matched",
+                        "mismatch",
+                        "unverified"
+                      ]
+                    },
+                    "match": {
+                      "type": [
+                        "boolean",
+                        "null"
+                      ]
+                    },
+                    "phone_number_verified": {
+                      "type": "boolean"
+                    },
+                    "phone_number_verified_at": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "match",
+                    "phone_number_verified"
+                  ],
+                  "additionalProperties": false
+                },
+                "example": {
+                  "status": "matched",
+                  "match": true,
+                  "phone_number_verified": true,
+                  "phone_number_verified_at": 2000000000
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation / invalid grant",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid request parameters",
+                  "code": "invalid_request"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, expired or revoked credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid or expired API key",
+                  "code": "invalid_client"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Insufficient scope / CORS / account access",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "API key does not permit this operation",
+                  "code": "insufficient_scope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found in the permitted scope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Resource not found",
+                  "code": "NOT_FOUND"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Policy version or activity identifier conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Reload the current policy or use the correct event identifier",
+                  "code": "CONFLICT"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Quota exceeded; respect Retry-After",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Service request quota exceeded",
+                  "code": "RATE_LIMITED"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "เวลารอเป็นวินาที ห้าม retry รัว",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Dependency or audit unavailable; fail closed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Service unavailable",
+                  "code": "AUDIT_UNAVAILABLE"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Unable to process request",
+                  "code": "INTERNAL_ERROR"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sso/consent": {
+      "get": {
+        "operationId": "readConsent",
+        "summary": "อ่านคำขออนุญาตข้อมูล",
+        "description": "CUSA first-party UI endpoint; full session required. Mutations require exact Origin and CSRF header. Never call from the service browser.",
+        "tags": [
+          "Consent"
+        ],
+        "security": [
+          {
+            "CookieSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "request",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Opaque credential: CSPRNG 32 bytes, base64url without padding",
+              "pattern": "^[A-Za-z0-9_-]{43}$"
+            },
+            "description": "Opaque request from authorize, bound to the current full CUSA session; expires in 10 minutes"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Registered recipient, purpose, policy version and requested scopes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsentContext"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation / invalid grant",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid request parameters",
+                  "code": "invalid_request"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, expired or revoked credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid or expired API key",
+                  "code": "invalid_client"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Insufficient scope / CORS / account access",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "API key does not permit this operation",
+                  "code": "insufficient_scope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found in the permitted scope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Resource not found",
+                  "code": "NOT_FOUND"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Policy version or activity identifier conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Reload the current policy or use the correct event identifier",
+                  "code": "CONFLICT"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Quota exceeded; respect Retry-After",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Service request quota exceeded",
+                  "code": "RATE_LIMITED"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "เวลารอเป็นวินาที ห้าม retry รัว",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Dependency or audit unavailable; fail closed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Service unavailable",
+                  "code": "AUDIT_UNAVAILABLE"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Unable to process request",
+                  "code": "INTERNAL_ERROR"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "decideConsent",
+        "summary": "อนุมัติหรือปฏิเสธการแชร์ข้อมูล",
+        "description": "CUSA first-party UI endpoint; full session required. Mutations require exact Origin and CSRF header. Never call from the service browser. Approval must include identity:read and only requested scopes. Denial must send scopes:[]. Decision is one-use, atomic with code issuance and audit. No token before consent. Must include every required scope from the current service policy; required factor enrollment is checked again server-side.",
+        "tags": [
+          "Consent"
+        ],
+        "security": [
+          {
+            "CookieSession": [],
+            "CsrfToken": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "request": {
+                    "type": "string",
+                    "description": "Opaque credential: CSPRNG 32 bytes, base64url without padding",
+                    "pattern": "^[A-Za-z0-9_-]{43}$"
+                  },
+                  "approved": {
+                    "type": "boolean"
+                  },
+                  "scopes": {
+                    "type": "array",
+                    "maxItems": 7,
+                    "uniqueItems": true,
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "identity:read",
+                        "profile",
+                        "email",
+                        "phone",
+                        "phone:match",
+                        "line",
+                        "assurance"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "request",
+                  "approved",
+                  "scopes"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "redirectTo": {
+                      "type": "string",
+                      "description": "Validated callback with code/state or error=access_denied/state"
+                    }
+                  },
+                  "required": [
+                    "redirectTo"
+                  ],
+                  "additionalProperties": false
+                },
+                "example": {
+                  "redirectTo": "https://portal.example.com/callback?error=access_denied&state=<STATE>"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation / invalid grant",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid request parameters",
+                  "code": "invalid_request"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, expired or revoked credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid or expired API key",
+                  "code": "invalid_client"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Insufficient scope / CORS / account access",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "API key does not permit this operation",
+                  "code": "insufficient_scope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found in the permitted scope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Resource not found",
+                  "code": "NOT_FOUND"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Policy version or activity identifier conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Reload the current policy or use the correct event identifier",
+                  "code": "CONFLICT"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Quota exceeded; respect Retry-After",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Service request quota exceeded",
+                  "code": "RATE_LIMITED"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "เวลารอเป็นวินาที ห้าม retry รัว",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Dependency or audit unavailable; fail closed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Service unavailable",
+                  "code": "AUDIT_UNAVAILABLE"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Unable to process request",
+                  "code": "INTERNAL_ERROR"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sso/consents": {
+      "get": {
+        "operationId": "listConsents",
+        "summary": "ดูการอนุญาตล่าสุดของตนเอง",
+        "description": "CUSA first-party UI endpoint; full session required. Mutations require exact Origin and CSRF header. Never call from the service browser.",
+        "tags": [
+          "Consent"
+        ],
+        "security": [
+          {
+            "CookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "consents": {
+                      "type": "array",
+                      "maxItems": 100,
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "description": "Consent ID",
+                            "format": "uuid"
+                          },
+                          "name": {
+                            "type": "string",
+                            "description": "Service name"
+                          },
+                          "scope": {
+                            "type": "string",
+                            "description": "Approved scopes"
+                          },
+                          "approvedAt": {
+                            "type": "string",
+                            "description": "Approval time",
+                            "format": "date-time"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "name",
+                          "scope",
+                          "approvedAt"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "consents"
+                  ],
+                  "additionalProperties": false
+                },
+                "example": {
+                  "consents": []
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation / invalid grant",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid request parameters",
+                  "code": "invalid_request"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, expired or revoked credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid or expired API key",
+                  "code": "invalid_client"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Insufficient scope / CORS / account access",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "API key does not permit this operation",
+                  "code": "insufficient_scope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found in the permitted scope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Resource not found",
+                  "code": "NOT_FOUND"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Policy version or activity identifier conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Reload the current policy or use the correct event identifier",
+                  "code": "CONFLICT"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Quota exceeded; respect Retry-After",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Service request quota exceeded",
+                  "code": "RATE_LIMITED"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "เวลารอเป็นวินาที ห้าม retry รัว",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Dependency or audit unavailable; fail closed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Service unavailable",
+                  "code": "AUDIT_UNAVAILABLE"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Unable to process request",
+                  "code": "INTERNAL_ERROR"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sso/consents/{id}": {
+      "delete": {
+        "operationId": "revokeConsent",
+        "summary": "ถอนการอนุญาตของตนเอง",
+        "description": "CUSA first-party UI endpoint; full session required. Mutations require exact Origin and CSRF header. Never call from the service browser. Revokes the grant behind the associated code/tokens; introspection cache delay at most 5 seconds. Does not erase copies/local sessions held by the service.",
+        "tags": [
+          "Consent"
+        ],
+        "security": [
+          {
+            "CookieSession": [],
+            "CsrfToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "ok"
+                  ],
+                  "additionalProperties": false
+                },
+                "example": {
+                  "ok": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation / invalid grant",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid request parameters",
+                  "code": "invalid_request"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, expired or revoked credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid or expired API key",
+                  "code": "invalid_client"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Insufficient scope / CORS / account access",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "API key does not permit this operation",
+                  "code": "insufficient_scope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found in the permitted scope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Resource not found",
+                  "code": "NOT_FOUND"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Policy version or activity identifier conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Reload the current policy or use the correct event identifier",
+                  "code": "CONFLICT"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Quota exceeded; respect Retry-After",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Service request quota exceeded",
+                  "code": "RATE_LIMITED"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "เวลารอเป็นวินาที ห้าม retry รัว",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Dependency or audit unavailable; fail closed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Service unavailable",
+                  "code": "AUDIT_UNAVAILABLE"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Unable to process request",
+                  "code": "INTERNAL_ERROR"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/applications/{id}/sharing": {
+      "get": {
+        "operationId": "getSharingPolicy",
+        "summary": "ดูขอบเขตข้อมูลสูงสุดของ Service",
+        "description": "CUSA first-party UI endpoint; full session required. Mutations require exact Origin and CSRF header. Never call from the service browser. Admin only. PUT requires fresh Passkey/TOTP and increments policy version, invalidating old requests/grants/tokens (cache bound applies). Scopes must include identity:read. Extra sensitive scopes are disabled by default.",
+        "tags": [
+          "Consent"
+        ],
+        "security": [
+          {
+            "CookieSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "scopes": {
+                      "type": "array",
+                      "maxItems": 7,
+                      "uniqueItems": true,
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "identity:read",
+                          "profile",
+                          "email",
+                          "phone",
+                          "phone:match",
+                          "line",
+                          "assurance"
+                        ]
+                      }
+                    },
+                    "purpose": {
+                      "type": "string",
+                      "description": "Concrete purpose shown to the user",
+                      "minLength": 10,
+                      "maxLength": 500
+                    },
+                    "version": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "scopes",
+                    "purpose",
+                    "version"
+                  ],
+                  "additionalProperties": false
+                },
+                "example": {
+                  "scopes": [
+                    "identity:read",
+                    "profile",
+                    "email"
+                  ],
+                  "purpose": "เข้าสู่ระบบและแสดงข้อมูลบัญชีใน Service นี้",
+                  "version": 1
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation / invalid grant",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid request parameters",
+                  "code": "invalid_request"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, expired or revoked credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid or expired API key",
+                  "code": "invalid_client"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Insufficient scope / CORS / account access",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "API key does not permit this operation",
+                  "code": "insufficient_scope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found in the permitted scope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Resource not found",
+                  "code": "NOT_FOUND"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Policy version or activity identifier conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Reload the current policy or use the correct event identifier",
+                  "code": "CONFLICT"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Quota exceeded; respect Retry-After",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Service request quota exceeded",
+                  "code": "RATE_LIMITED"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "เวลารอเป็นวินาที ห้าม retry รัว",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Dependency or audit unavailable; fail closed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Service unavailable",
+                  "code": "AUDIT_UNAVAILABLE"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Unable to process request",
+                  "code": "INTERNAL_ERROR"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "saveSharingPolicy",
+        "summary": "ตั้งค่าขอบเขตข้อมูลและวัตถุประสงค์",
+        "description": "CUSA first-party UI endpoint; full session required. Mutations require exact Origin and CSRF header. Never call from the service browser. Admin only. PUT requires fresh Passkey/TOTP and increments policy version, invalidating old requests/grants/tokens (cache bound applies). Scopes must include identity:read. Extra sensitive scopes are disabled by default.",
+        "tags": [
+          "Consent"
+        ],
+        "security": [
+          {
+            "CookieSession": [],
+            "CsrfToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SharingPolicy"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "ok"
+                  ],
+                  "additionalProperties": false
+                },
+                "example": {
+                  "ok": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation / invalid grant",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid request parameters",
+                  "code": "invalid_request"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, expired or revoked credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid or expired API key",
+                  "code": "invalid_client"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Insufficient scope / CORS / account access",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "API key does not permit this operation",
+                  "code": "insufficient_scope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found in the permitted scope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Resource not found",
+                  "code": "NOT_FOUND"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Policy version or activity identifier conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Reload the current policy or use the correct event identifier",
+                  "code": "CONFLICT"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Quota exceeded; respect Retry-After",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Service request quota exceeded",
+                  "code": "RATE_LIMITED"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "เวลารอเป็นวินาที ห้าม retry รัว",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Dependency or audit unavailable; fail closed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Service unavailable",
+                  "code": "AUDIT_UNAVAILABLE"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Unable to process request",
+                  "code": "INTERNAL_ERROR"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/applications/{applicationId}/access-policy": {
+      "get": {
+        "operationId": "getAccessPolicy",
+        "summary": "Read service account policy",
+        "description": "CUSA first-party UI endpoint; full session required. Mutations require exact Origin and CSRF header. Never call from the service browser. Central admin only; service roles never authorize administration.",
+        "tags": [
+          "Consent"
+        ],
+        "security": [
+          {
+            "CookieSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "applicationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current policy; lifecycle is review-only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "registration": {
+                      "type": "string",
+                      "enum": [
+                        "closed",
+                        "invite",
+                        "open"
+                      ]
+                    },
+                    "defaultRoleId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "format": "uuid"
+                    },
+                    "requirePhone": {
+                      "type": "boolean"
+                    },
+                    "requireLine": {
+                      "type": "boolean"
+                    },
+                    "minimumMfa": {
+                      "type": "string",
+                      "enum": [
+                        "standard",
+                        "strong"
+                      ]
+                    },
+                    "requiredScopes": {
+                      "type": "array",
+                      "maxItems": 7,
+                      "uniqueItems": true,
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "identity:read",
+                          "profile",
+                          "email",
+                          "phone",
+                          "phone:match",
+                          "line",
+                          "assurance"
+                        ]
+                      }
+                    },
+                    "registrationLimit": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 100000
+                    },
+                    "pendingDays": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 30
+                    },
+                    "inactiveDays": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ],
+                      "minimum": 30,
+                      "maximum": 3650
+                    },
+                    "noticeDays": {
+                      "type": "integer",
+                      "minimum": 7,
+                      "maximum": 90
+                    },
+                    "recoveryDays": {
+                      "type": "integer",
+                      "minimum": 7,
+                      "maximum": 90
+                    },
+                    "version": {
+                      "type": "integer"
+                    },
+                    "lifecycleMode": {
+                      "const": "preview"
+                    }
+                  },
+                  "required": [
+                    "registration",
+                    "defaultRoleId",
+                    "requirePhone",
+                    "requireLine",
+                    "minimumMfa",
+                    "requiredScopes",
+                    "registrationLimit",
+                    "pendingDays",
+                    "inactiveDays",
+                    "noticeDays",
+                    "recoveryDays",
+                    "version",
+                    "lifecycleMode"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation / invalid grant",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid request parameters",
+                  "code": "invalid_request"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, expired or revoked credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid or expired API key",
+                  "code": "invalid_client"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Insufficient scope / CORS / account access",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "API key does not permit this operation",
+                  "code": "insufficient_scope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found in the permitted scope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Resource not found",
+                  "code": "NOT_FOUND"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Policy version or activity identifier conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Reload the current policy or use the correct event identifier",
+                  "code": "CONFLICT"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Quota exceeded; respect Retry-After",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Service request quota exceeded",
+                  "code": "RATE_LIMITED"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "เวลารอเป็นวินาที ห้าม retry รัว",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Dependency or audit unavailable; fail closed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Service unavailable",
+                  "code": "AUDIT_UNAVAILABLE"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Unable to process request",
+                  "code": "INTERNAL_ERROR"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "setAccessPolicy",
+        "summary": "Set service account policy",
+        "description": "CUSA first-party UI endpoint; full session required. Mutations require exact Origin and CSRF header. Never call from the service browser. Central admin only; service roles never authorize administration.",
+        "tags": [
+          "Consent"
+        ],
+        "security": [
+          {
+            "CookieSession": [],
+            "CsrfToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "applicationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "registration": {
+                    "type": "string",
+                    "enum": [
+                      "closed",
+                      "invite",
+                      "open"
+                    ]
+                  },
+                  "defaultRoleId": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "format": "uuid"
+                  },
+                  "requirePhone": {
+                    "type": "boolean"
+                  },
+                  "requireLine": {
+                    "type": "boolean"
+                  },
+                  "minimumMfa": {
+                    "type": "string",
+                    "enum": [
+                      "standard",
+                      "strong"
+                    ]
+                  },
+                  "requiredScopes": {
+                    "type": "array",
+                    "maxItems": 7,
+                    "uniqueItems": true,
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "identity:read",
+                        "profile",
+                        "email",
+                        "phone",
+                        "phone:match",
+                        "line",
+                        "assurance"
+                      ]
+                    }
+                  },
+                  "registrationLimit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100000
+                  },
+                  "pendingDays": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 30
+                  },
+                  "inactiveDays": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "minimum": 30,
+                    "maximum": 3650
+                  },
+                  "noticeDays": {
+                    "type": "integer",
+                    "minimum": 7,
+                    "maximum": 90
+                  },
+                  "recoveryDays": {
+                    "type": "integer",
+                    "minimum": 7,
+                    "maximum": 90
+                  },
+                  "expectedVersion": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                },
+                "required": [
+                  "registration",
+                  "defaultRoleId",
+                  "requirePhone",
+                  "requireLine",
+                  "minimumMfa",
+                  "requiredScopes",
+                  "registrationLimit",
+                  "pendingDays",
+                  "inactiveDays",
+                  "noticeDays",
+                  "recoveryDays",
+                  "expectedVersion"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Fresh strong admin MFA required; increments policy version and invalidates existing service grants",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "registration": {
+                      "type": "string",
+                      "enum": [
+                        "closed",
+                        "invite",
+                        "open"
+                      ]
+                    },
+                    "defaultRoleId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "format": "uuid"
+                    },
+                    "requirePhone": {
+                      "type": "boolean"
+                    },
+                    "requireLine": {
+                      "type": "boolean"
+                    },
+                    "minimumMfa": {
+                      "type": "string",
+                      "enum": [
+                        "standard",
+                        "strong"
+                      ]
+                    },
+                    "requiredScopes": {
+                      "type": "array",
+                      "maxItems": 7,
+                      "uniqueItems": true,
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "identity:read",
+                          "profile",
+                          "email",
+                          "phone",
+                          "phone:match",
+                          "line",
+                          "assurance"
+                        ]
+                      }
+                    },
+                    "registrationLimit": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 100000
+                    },
+                    "pendingDays": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 30
+                    },
+                    "inactiveDays": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ],
+                      "minimum": 30,
+                      "maximum": 3650
+                    },
+                    "noticeDays": {
+                      "type": "integer",
+                      "minimum": 7,
+                      "maximum": 90
+                    },
+                    "recoveryDays": {
+                      "type": "integer",
+                      "minimum": 7,
+                      "maximum": 90
+                    },
+                    "version": {
+                      "type": "integer"
+                    },
+                    "lifecycleMode": {
+                      "const": "preview"
+                    }
+                  },
+                  "required": [
+                    "registration",
+                    "defaultRoleId",
+                    "requirePhone",
+                    "requireLine",
+                    "minimumMfa",
+                    "requiredScopes",
+                    "registrationLimit",
+                    "pendingDays",
+                    "inactiveDays",
+                    "noticeDays",
+                    "recoveryDays",
+                    "version",
+                    "lifecycleMode"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation / invalid grant",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid request parameters",
+                  "code": "invalid_request"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, expired or revoked credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid or expired API key",
+                  "code": "invalid_client"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Insufficient scope / CORS / account access",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "API key does not permit this operation",
+                  "code": "insufficient_scope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found in the permitted scope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Resource not found",
+                  "code": "NOT_FOUND"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Policy version or activity identifier conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Reload the current policy or use the correct event identifier",
+                  "code": "CONFLICT"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Quota exceeded; respect Retry-After",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Service request quota exceeded",
+                  "code": "RATE_LIMITED"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "เวลารอเป็นวินาที ห้าม retry รัว",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Dependency or audit unavailable; fail closed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Service unavailable",
+                  "code": "AUDIT_UNAVAILABLE"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Unable to process request",
+                  "code": "INTERNAL_ERROR"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/applications/{applicationId}/invitations": {
+      "get": {
+        "operationId": "listInvitations",
+        "summary": "List service invitations",
+        "description": "CUSA first-party UI endpoint; full session required. Mutations require exact Origin and CSRF header. Never call from the service browser.",
+        "tags": [
+          "Consent"
+        ],
+        "security": [
+          {
+            "CookieSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "applicationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10000,
+              "default": 1
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated invitations; no automatic email delivery",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "invitations": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "email": {
+                            "type": "string",
+                            "description": "Verified Google email invited to this service",
+                            "format": "email",
+                            "maxLength": 254
+                          },
+                          "expiresAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          }
+                        },
+                        "required": [
+                          "email",
+                          "expiresAt"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "hasMore": {
+                      "type": "boolean"
+                    },
+                    "page": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "invitations",
+                    "hasMore",
+                    "page"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation / invalid grant",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid request parameters",
+                  "code": "invalid_request"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, expired or revoked credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid or expired API key",
+                  "code": "invalid_client"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Insufficient scope / CORS / account access",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "API key does not permit this operation",
+                  "code": "insufficient_scope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found in the permitted scope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Resource not found",
+                  "code": "NOT_FOUND"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Policy version or activity identifier conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Reload the current policy or use the correct event identifier",
+                  "code": "CONFLICT"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Quota exceeded; respect Retry-After",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Service request quota exceeded",
+                  "code": "RATE_LIMITED"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "เวลารอเป็นวินาที ห้าม retry รัว",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Dependency or audit unavailable; fail closed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Service unavailable",
+                  "code": "AUDIT_UNAVAILABLE"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Unable to process request",
+                  "code": "INTERNAL_ERROR"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "inviteServiceMember",
+        "summary": "Invite service member",
+        "description": "CUSA first-party UI endpoint; full session required. Mutations require exact Origin and CSRF header. Never call from the service browser.",
+        "tags": [
+          "Consent"
+        ],
+        "security": [
+          {
+            "CookieSession": [],
+            "CsrfToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "applicationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "email": {
+                    "type": "string",
+                    "description": "Verified Google email invited to this service",
+                    "format": "email",
+                    "maxLength": 254
+                  },
+                  "days": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 30
+                  }
+                },
+                "required": [
+                  "email",
+                  "days"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "ok"
+                  ],
+                  "additionalProperties": false
+                },
+                "example": {
+                  "ok": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation / invalid grant",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid request parameters",
+                  "code": "invalid_request"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, expired or revoked credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid or expired API key",
+                  "code": "invalid_client"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Insufficient scope / CORS / account access",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "API key does not permit this operation",
+                  "code": "insufficient_scope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found in the permitted scope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Resource not found",
+                  "code": "NOT_FOUND"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Policy version or activity identifier conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Reload the current policy or use the correct event identifier",
+                  "code": "CONFLICT"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Quota exceeded; respect Retry-After",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Service request quota exceeded",
+                  "code": "RATE_LIMITED"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "เวลารอเป็นวินาที ห้าม retry รัว",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Dependency or audit unavailable; fail closed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Service unavailable",
+                  "code": "AUDIT_UNAVAILABLE"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Unable to process request",
+                  "code": "INTERNAL_ERROR"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "removeServiceInvitation",
+        "summary": "Withdraw invitation",
+        "description": "CUSA first-party UI endpoint; full session required. Mutations require exact Origin and CSRF header. Never call from the service browser.",
+        "tags": [
+          "Consent"
+        ],
+        "security": [
+          {
+            "CookieSession": [],
+            "CsrfToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "applicationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "email": {
+                    "type": "string",
+                    "description": "Verified Google email invited to this service",
+                    "format": "email",
+                    "maxLength": 254
+                  }
+                },
+                "required": [
+                  "email"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Stops pending enrollment; does not revoke an active membership",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "ok"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation / invalid grant",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid request parameters",
+                  "code": "invalid_request"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, expired or revoked credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid or expired API key",
+                  "code": "invalid_client"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Insufficient scope / CORS / account access",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "API key does not permit this operation",
+                  "code": "insufficient_scope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found in the permitted scope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Resource not found",
+                  "code": "NOT_FOUND"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Policy version or activity identifier conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Reload the current policy or use the correct event identifier",
+                  "code": "CONFLICT"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Quota exceeded; respect Retry-After",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Service request quota exceeded",
+                  "code": "RATE_LIMITED"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "เวลารอเป็นวินาที ห้าม retry รัว",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Dependency or audit unavailable; fail closed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Service unavailable",
+                  "code": "AUDIT_UNAVAILABLE"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Unable to process request",
+                  "code": "INTERNAL_ERROR"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/applications/{applicationId}/lifecycle-preview": {
+      "get": {
+        "operationId": "previewMemberLifecycle",
+        "summary": "Review inactive service memberships without deleting data",
+        "description": "CUSA first-party UI endpoint; full session required. Mutations require exact Origin and CSRF header. Never call from the service browser.",
+        "tags": [
+          "Consent"
+        ],
+        "security": [
+          {
+            "CookieSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "applicationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Keyset preview only; no notification, suspension or deletion",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "mode": {
+                      "const": "preview"
+                    },
+                    "policy": {
+                      "type": "object",
+                      "properties": {
+                        "registration": {
+                          "type": "string",
+                          "enum": [
+                            "closed",
+                            "invite",
+                            "open"
+                          ]
+                        },
+                        "defaultRoleId": {
+                          "type": [
+                            "string",
+                            "null"
+                          ],
+                          "format": "uuid"
+                        },
+                        "requirePhone": {
+                          "type": "boolean"
+                        },
+                        "requireLine": {
+                          "type": "boolean"
+                        },
+                        "minimumMfa": {
+                          "type": "string",
+                          "enum": [
+                            "standard",
+                            "strong"
+                          ]
+                        },
+                        "requiredScopes": {
+                          "type": "array",
+                          "maxItems": 7,
+                          "uniqueItems": true,
+                          "items": {
+                            "type": "string",
+                            "enum": [
+                              "identity:read",
+                              "profile",
+                              "email",
+                              "phone",
+                              "phone:match",
+                              "line",
+                              "assurance"
+                            ]
+                          }
+                        },
+                        "registrationLimit": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 100000
+                        },
+                        "pendingDays": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 30
+                        },
+                        "inactiveDays": {
+                          "type": [
+                            "integer",
+                            "null"
+                          ],
+                          "minimum": 30,
+                          "maximum": 3650
+                        },
+                        "noticeDays": {
+                          "type": "integer",
+                          "minimum": 7,
+                          "maximum": 90
+                        },
+                        "recoveryDays": {
+                          "type": "integer",
+                          "minimum": 7,
+                          "maximum": 90
+                        },
+                        "version": {
+                          "type": "integer"
+                        },
+                        "lifecycleMode": {
+                          "const": "preview"
+                        }
+                      },
+                      "required": [
+                        "registration",
+                        "defaultRoleId",
+                        "requirePhone",
+                        "requireLine",
+                        "minimumMfa",
+                        "requiredScopes",
+                        "registrationLimit",
+                        "pendingDays",
+                        "inactiveDays",
+                        "noticeDays",
+                        "recoveryDays",
+                        "version",
+                        "lifecycleMode"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "userId": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "email": {
+                            "type": "string",
+                            "description": "Verified Google email invited to this service",
+                            "format": "email",
+                            "maxLength": 254
+                          },
+                          "accountType": {
+                            "enum": [
+                              "internal",
+                              "service"
+                            ]
+                          },
+                          "enrollment": {
+                            "enum": [
+                              "pending",
+                              "active"
+                            ]
+                          },
+                          "pendingUntil": {
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "format": "date-time"
+                          },
+                          "lastActivityAt": {
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "format": "date-time"
+                          },
+                          "lastReportedActivityAt": {
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "format": "date-time"
+                          },
+                          "reason": {
+                            "enum": [
+                              "unfinished_registration",
+                              "inactive_membership"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "userId",
+                          "email",
+                          "accountType",
+                          "enrollment",
+                          "pendingUntil",
+                          "lastActivityAt",
+                          "lastReportedActivityAt",
+                          "reason"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "meta": {
+                      "type": "object",
+                      "properties": {
+                        "hasMore": {
+                          "type": "boolean"
+                        },
+                        "nextCursor": {
+                          "type": [
+                            "string",
+                            "null"
+                          ],
+                          "format": "uuid"
+                        }
+                      },
+                      "required": [
+                        "hasMore",
+                        "nextCursor"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "warning": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "mode",
+                    "policy",
+                    "data",
+                    "meta",
+                    "warning"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation / invalid grant",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid request parameters",
+                  "code": "invalid_request"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, expired or revoked credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid or expired API key",
+                  "code": "invalid_client"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Insufficient scope / CORS / account access",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "API key does not permit this operation",
+                  "code": "insufficient_scope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found in the permitted scope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Resource not found",
+                  "code": "NOT_FOUND"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Policy version or activity identifier conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Reload the current policy or use the correct event identifier",
+                  "code": "CONFLICT"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Quota exceeded; respect Retry-After",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Service request quota exceeded",
+                  "code": "RATE_LIMITED"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "เวลารอเป็นวินาที ห้าม retry รัว",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Dependency or audit unavailable; fail closed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Service unavailable",
+                  "code": "AUDIT_UNAVAILABLE"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Unable to process request",
+                  "code": "INTERNAL_ERROR"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sso/enrollment": {
+      "get": {
+        "operationId": "readServiceEnrollment",
+        "summary": "Read required service enrollment steps",
+        "description": "CUSA first-party UI endpoint; full session required. Mutations require exact Origin and CSRF header. Never call from the service browser.",
+        "tags": [
+          "Consent"
+        ],
+        "security": [
+          {
+            "CookieSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "returnTo",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Validated local authorization request, including original state and PKCE",
+              "maxLength": 3000
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Own enrollment only; no credentials issued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "application": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "name": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "name"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "requirements": {
+                      "type": "object",
+                      "properties": {
+                        "phone": {
+                          "type": "boolean"
+                        },
+                        "line": {
+                          "type": "boolean"
+                        },
+                        "minimumMfa": {
+                          "enum": [
+                            "standard",
+                            "strong"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "phone",
+                        "line",
+                        "minimumMfa"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "missing": {
+                      "type": "array",
+                      "items": {
+                        "enum": [
+                          "phone",
+                          "line",
+                          "strong_mfa"
+                        ]
+                      }
+                    },
+                    "enrolled": {
+                      "type": "boolean"
+                    },
+                    "blocked": {
+                      "type": "boolean"
+                    },
+                    "ready": {
+                      "type": "boolean"
+                    },
+                    "registration": {
+                      "enum": [
+                        "closed",
+                        "invite",
+                        "open"
+                      ]
+                    },
+                    "policyVersion": {
+                      "type": "integer"
+                    },
+                    "pendingDays": {
+                      "type": "integer"
+                    },
+                    "inactiveDays": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
+                    },
+                    "noticeDays": {
+                      "type": "integer"
+                    },
+                    "lifecycleMode": {
+                      "const": "preview"
+                    },
+                    "totpEnabled": {
+                      "type": "boolean"
+                    },
+                    "returnTo": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "application",
+                    "requirements",
+                    "missing",
+                    "enrolled",
+                    "blocked",
+                    "ready",
+                    "registration",
+                    "policyVersion",
+                    "pendingDays",
+                    "inactiveDays",
+                    "noticeDays",
+                    "lifecycleMode",
+                    "totpEnabled",
+                    "returnTo"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation / invalid grant",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid request parameters",
+                  "code": "invalid_request"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, expired or revoked credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid or expired API key",
+                  "code": "invalid_client"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Insufficient scope / CORS / account access",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "API key does not permit this operation",
+                  "code": "insufficient_scope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found in the permitted scope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Resource not found",
+                  "code": "NOT_FOUND"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Policy version or activity identifier conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Reload the current policy or use the correct event identifier",
+                  "code": "CONFLICT"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Quota exceeded; respect Retry-After",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Service request quota exceeded",
+                  "code": "RATE_LIMITED"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "เวลารอเป็นวินาที ห้าม retry รัว",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Dependency or audit unavailable; fail closed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Service unavailable",
+                  "code": "AUDIT_UNAVAILABLE"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Unable to process request",
+                  "code": "INTERNAL_ERROR"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "beginServiceEnrollment",
+        "summary": "Request provisional service membership",
+        "description": "CUSA first-party UI endpoint; full session required. Mutations require exact Origin and CSRF header. Never call from the service browser.",
+        "tags": [
+          "Consent"
+        ],
+        "security": [
+          {
+            "CookieSession": [],
+            "CsrfToken": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "returnTo": {
+                    "type": "string",
+                    "description": "Validated local authorization request, including original state and PKCE",
+                    "maxLength": 3000
+                  }
+                },
+                "required": [
+                  "returnTo"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "No role until MFA, service requirements and consent succeed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "application": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "name": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "name"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "requirements": {
+                      "type": "object",
+                      "properties": {
+                        "phone": {
+                          "type": "boolean"
+                        },
+                        "line": {
+                          "type": "boolean"
+                        },
+                        "minimumMfa": {
+                          "enum": [
+                            "standard",
+                            "strong"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "phone",
+                        "line",
+                        "minimumMfa"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "missing": {
+                      "type": "array",
+                      "items": {
+                        "enum": [
+                          "phone",
+                          "line",
+                          "strong_mfa"
+                        ]
+                      }
+                    },
+                    "enrolled": {
+                      "type": "boolean"
+                    },
+                    "blocked": {
+                      "type": "boolean"
+                    },
+                    "ready": {
+                      "type": "boolean"
+                    },
+                    "registration": {
+                      "enum": [
+                        "closed",
+                        "invite",
+                        "open"
+                      ]
+                    },
+                    "policyVersion": {
+                      "type": "integer"
+                    },
+                    "pendingDays": {
+                      "type": "integer"
+                    },
+                    "inactiveDays": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
+                    },
+                    "noticeDays": {
+                      "type": "integer"
+                    },
+                    "lifecycleMode": {
+                      "const": "preview"
+                    },
+                    "totpEnabled": {
+                      "type": "boolean"
+                    },
+                    "returnTo": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "application",
+                    "requirements",
+                    "missing",
+                    "enrolled",
+                    "blocked",
+                    "ready",
+                    "registration",
+                    "policyVersion",
+                    "pendingDays",
+                    "inactiveDays",
+                    "noticeDays",
+                    "lifecycleMode",
+                    "totpEnabled",
+                    "returnTo"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation / invalid grant",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid request parameters",
+                  "code": "invalid_request"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, expired or revoked credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid or expired API key",
+                  "code": "invalid_client"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Insufficient scope / CORS / account access",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "API key does not permit this operation",
+                  "code": "insufficient_scope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found in the permitted scope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Resource not found",
+                  "code": "NOT_FOUND"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Policy version or activity identifier conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Reload the current policy or use the correct event identifier",
+                  "code": "CONFLICT"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Quota exceeded; respect Retry-After",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Service request quota exceeded",
+                  "code": "RATE_LIMITED"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "เวลารอเป็นวินาที ห้าม retry รัว",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Dependency or audit unavailable; fail closed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Service unavailable",
+                  "code": "AUDIT_UNAVAILABLE"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Unable to process request",
+                  "code": "INTERNAL_ERROR"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sso/activity": {
+      "post": {
+        "operationId": "reportServiceActivity",
+        "summary": "Report a real user action from the service backend",
+        "description": "Requires a dedicated member:activity API-key scope. Subject must be an active member of the key application. Send only actual user interactions, never polling/introspection/cron. Server time is used; eventId is deduplicated for 30 days. At most one update per user/service per 5 minutes; other new events are acknowledged without being stored. Does not revive a revoked membership. No browser CORS or cookie authentication.",
+        "tags": [
+          "Identity"
+        ],
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "sub": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "eventId": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                },
+                "required": [
+                  "sub",
+                  "eventId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Accepted, duplicate or coalesced activity; see optional flags",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "const": true
+                    },
+                    "duplicate": {
+                      "type": "boolean"
+                    },
+                    "recorded": {
+                      "const": false
+                    },
+                    "retryAfter": {
+                      "const": 300
+                    }
+                  },
+                  "required": [
+                    "ok"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation / invalid grant",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid request parameters",
+                  "code": "invalid_request"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, expired or revoked credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid or expired API key",
+                  "code": "invalid_client"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Insufficient scope / CORS / account access",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "API key does not permit this operation",
+                  "code": "insufficient_scope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found in the permitted scope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Resource not found",
+                  "code": "NOT_FOUND"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Policy version or activity identifier conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Reload the current policy or use the correct event identifier",
+                  "code": "CONFLICT"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Quota exceeded; respect Retry-After",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Service request quota exceeded",
+                  "code": "RATE_LIMITED"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "เวลารอเป็นวินาที ห้าม retry รัว",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Dependency or audit unavailable; fail closed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Service unavailable",
+                  "code": "AUDIT_UNAVAILABLE"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Unable to process request",
+                  "code": "INTERNAL_ERROR"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "ApiKey": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key",
+        "description": "Application-bound backend secret. Scope identity:read, token:introspect, token:revoke or member:activity as required."
+      },
+      "CookieSession": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "__Host-cusa_session",
+        "description": "HttpOnly Secure cookie in production; cusa_session on localhost development"
+      },
+      "CsrfToken": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-CSRF-Token"
+      },
+      "BearerToken": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "opaque"
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "string",
+            "description": "ข้อความที่ปลอดภัยสำหรับแสดงผล"
+          },
+          "code": {
+            "type": "string",
+            "description": "Machine-readable error code; case-sensitive"
+          },
+          "requestId": {
+            "type": "string",
+            "description": "Server-generated correlation UUID ถ้ามี",
+            "format": "uuid"
+          }
+        }
+      },
+      "Profile": {
+        "type": "object",
+        "properties": {
+          "sub": {
+            "type": "string",
+            "description": "รหัสผู้ใช้ถาวร ใช้เป็น foreign key ของระบบปลายทาง",
+            "format": "uuid"
+          },
+          "email": {
+            "type": "string",
+            "description": "อีเมลที่ยืนยันแล้ว อาจเปลี่ยนได้ ไม่ใช่ primary user ID",
+            "format": "email"
+          },
+          "name": {
+            "type": "string",
+            "description": "ชื่อแสดงผล"
+          },
+          "given_name": {
+            "type": "string",
+            "description": "ชื่อจริง อาจเป็นสตริงว่าง"
+          },
+          "family_name": {
+            "type": "string",
+            "description": "นามสกุล อาจเป็นสตริงว่าง"
+          },
+          "department": {
+            "type": "string",
+            "description": "หน่วยงานของผู้ใช้เฉพาะ Service นี้ อาจว่าง"
+          },
+          "roles": {
+            "type": "array",
+            "description": "รหัส Role ที่ได้รับใน Service นี้ ไม่ใช่สิทธิ์ CUSA Admin",
+            "items": {
+              "type": "string"
+            }
+          },
+          "aud": {
+            "type": "string",
+            "description": "Application ID ต้องเท่ากับ SSO_APPLICATION_ID ของระบบคุณ",
+            "format": "uuid"
+          },
+          "scope": {
+            "type": "string",
+            "description": "Scopes actually approved; check for missing requested scopes"
+          },
+          "email_verified": {
+            "type": "boolean",
+            "const": true
+          },
+          "picture": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "HTTPS profile image URL; profile scope only"
+          },
+          "phone_number": {
+            "type": "string",
+            "description": "Verified E.164 phone; phone scope only"
+          },
+          "phone_number_verified": {
+            "type": "boolean",
+            "description": "Proof of control at verification time, not SIM registration/KYC"
+          },
+          "phone_number_verified_at": {
+            "type": "integer",
+            "description": "Unix seconds; phone scope, only when verified"
+          },
+          "line": {
+            "type": "object",
+            "properties": {
+              "linked": {
+                "type": "boolean"
+              },
+              "user_id": {
+                "type": "string",
+                "description": "LINE UID in the configured LINE Provider"
+              },
+              "login_channel_id": {
+                "type": "string",
+                "description": "Public LINE Login channel ID; not a Provider ID"
+              }
+            },
+            "required": [
+              "linked"
+            ],
+            "additionalProperties": false
+          },
+          "authentication": {
+            "type": "object",
+            "properties": {
+              "primary_method": {
+                "type": "string",
+                "enum": [
+                  "google"
+                ]
+              },
+              "second_step_method": {
+                "type": "string",
+                "enum": [
+                  "email",
+                  "totp",
+                  "passkey",
+                  "line",
+                  "recovery"
+                ]
+              },
+              "verified_at": {
+                "type": "integer",
+                "description": "Unix seconds of the verified second step at consent approval"
+              },
+              "assurance": {
+                "type": "string",
+                "enum": [
+                  "cusa:standard",
+                  "cusa:strong",
+                  "cusa:recovery"
+                ]
+              },
+              "phishing_resistant": {
+                "type": "boolean",
+                "description": "Whether this second step was a user-verified Passkey; not a certification of the whole account"
+              }
+            },
+            "required": [
+              "primary_method",
+              "second_step_method",
+              "verified_at",
+              "assurance",
+              "phishing_resistant"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "sub",
+          "aud",
+          "roles",
+          "scope"
+        ],
+        "additionalProperties": false
+      },
+      "ActiveToken": {
+        "type": "object",
+        "properties": {
+          "sub": {
+            "type": "string",
+            "description": "รหัสผู้ใช้ถาวร ใช้เป็น foreign key ของระบบปลายทาง",
+            "format": "uuid"
+          },
+          "email": {
+            "type": "string",
+            "description": "อีเมลที่ยืนยันแล้ว อาจเปลี่ยนได้ ไม่ใช่ primary user ID",
+            "format": "email"
+          },
+          "name": {
+            "type": "string",
+            "description": "ชื่อแสดงผล"
+          },
+          "given_name": {
+            "type": "string",
+            "description": "ชื่อจริง อาจเป็นสตริงว่าง"
+          },
+          "family_name": {
+            "type": "string",
+            "description": "นามสกุล อาจเป็นสตริงว่าง"
+          },
+          "department": {
+            "type": "string",
+            "description": "หน่วยงานของผู้ใช้เฉพาะ Service นี้ อาจว่าง"
+          },
+          "roles": {
+            "type": "array",
+            "description": "รหัส Role ที่ได้รับใน Service นี้ ไม่ใช่สิทธิ์ CUSA Admin",
+            "items": {
+              "type": "string"
+            }
+          },
+          "aud": {
+            "type": "string",
+            "description": "Application ID ต้องเท่ากับ SSO_APPLICATION_ID ของระบบคุณ",
+            "format": "uuid"
+          },
+          "scope": {
+            "type": "string",
+            "description": "Scopes actually approved; check for missing requested scopes"
+          },
+          "email_verified": {
+            "type": "boolean",
+            "const": true
+          },
+          "picture": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "HTTPS profile image URL; profile scope only"
+          },
+          "phone_number": {
+            "type": "string",
+            "description": "Verified E.164 phone; phone scope only"
+          },
+          "phone_number_verified": {
+            "type": "boolean",
+            "description": "Proof of control at verification time, not SIM registration/KYC"
+          },
+          "phone_number_verified_at": {
+            "type": "integer",
+            "description": "Unix seconds; phone scope, only when verified"
+          },
+          "line": {
+            "type": "object",
+            "properties": {
+              "linked": {
+                "type": "boolean"
+              },
+              "user_id": {
+                "type": "string",
+                "description": "LINE UID in the configured LINE Provider"
+              },
+              "login_channel_id": {
+                "type": "string",
+                "description": "Public LINE Login channel ID; not a Provider ID"
+              }
+            },
+            "required": [
+              "linked"
+            ],
+            "additionalProperties": false
+          },
+          "authentication": {
+            "type": "object",
+            "properties": {
+              "primary_method": {
+                "type": "string",
+                "enum": [
+                  "google"
+                ]
+              },
+              "second_step_method": {
+                "type": "string",
+                "enum": [
+                  "email",
+                  "totp",
+                  "passkey",
+                  "line",
+                  "recovery"
+                ]
+              },
+              "verified_at": {
+                "type": "integer",
+                "description": "Unix seconds of the verified second step at consent approval"
+              },
+              "assurance": {
+                "type": "string",
+                "enum": [
+                  "cusa:standard",
+                  "cusa:strong",
+                  "cusa:recovery"
+                ]
+              },
+              "phishing_resistant": {
+                "type": "boolean",
+                "description": "Whether this second step was a user-verified Passkey; not a certification of the whole account"
+              }
+            },
+            "required": [
+              "primary_method",
+              "second_step_method",
+              "verified_at",
+              "assurance",
+              "phishing_resistant"
+            ],
+            "additionalProperties": false
+          },
+          "active": {
+            "type": "boolean",
+            "const": true
+          },
+          "exp": {
+            "type": "integer",
+            "description": "Unix seconds; min(token, session, API-key expiry)"
+          }
+        },
+        "required": [
+          "sub",
+          "aud",
+          "roles",
+          "scope",
+          "active",
+          "exp"
+        ],
+        "additionalProperties": false
+      },
+      "InactiveToken": {
+        "type": "object",
+        "properties": {
+          "active": {
+            "type": "boolean",
+            "const": false
+          }
+        },
+        "required": [
+          "active"
+        ],
+        "additionalProperties": false
+      },
+      "ExchangeRequest": {
+        "type": "object",
+        "properties": {
+          "grant_type": {
+            "type": "string",
+            "enum": [
+              "authorization_code"
+            ]
+          },
+          "code": {
+            "type": "string",
+            "description": "Opaque credential: CSPRNG 32 bytes, base64url without padding",
+            "pattern": "^[A-Za-z0-9_-]{43}$"
+          },
+          "redirect_uri": {
+            "type": "string",
+            "description": "Callback เดียวกับ authorize",
+            "minLength": 1,
+            "maxLength": 2048
+          },
+          "code_verifier": {
+            "type": "string",
+            "description": "PKCE verifier เดิม ห้ามสร้างใหม่ที่ callback",
+            "pattern": "^[A-Za-z0-9._~-]{43,128}$"
+          }
+        },
+        "required": [
+          "grant_type",
+          "code",
+          "redirect_uri",
+          "code_verifier"
+        ],
+        "additionalProperties": false
+      },
+      "TokenResponse": {
+        "type": "object",
+        "properties": {
+          "access_token": {
+            "type": "string",
+            "description": "Opaque credential: CSPRNG 32 bytes, base64url without padding",
+            "pattern": "^[A-Za-z0-9_-]{43}$"
+          },
+          "token_type": {
+            "type": "string",
+            "enum": [
+              "Bearer"
+            ]
+          },
+          "expires_in": {
+            "type": "integer",
+            "const": 300,
+            "description": "อายุสูงสุด; session ต้นทางอาจหมดอายุก่อน"
+          },
+          "scope": {
+            "type": "string",
+            "description": "Space-separated scopes actually approved by the user"
+          }
+        },
+        "required": [
+          "access_token",
+          "token_type",
+          "expires_in",
+          "scope"
+        ],
+        "additionalProperties": false
+      },
+      "IntrospectionRequest": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string",
+            "description": "Opaque access token",
+            "minLength": 1,
+            "maxLength": 512
+          }
+        },
+        "required": [
+          "token"
+        ],
+        "additionalProperties": false
+      },
+      "LoginContext": {
+        "type": "object",
+        "properties": {
+          "application": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "ชื่อที่ลงทะเบียน"
+              },
+              "origin": {
+                "type": "string",
+                "description": "Origin จาก callback",
+                "format": "uri"
+              }
+            },
+            "required": [
+              "name",
+              "origin"
+            ],
+            "additionalProperties": false
+          },
+          "returnTo": {
+            "type": "string",
+            "description": "Internal authorize path สำหรับ View ของ CUSA SSO"
+          },
+          "registration": {
+            "type": "string",
+            "enum": [
+              "closed",
+              "invite",
+              "open"
+            ]
+          }
+        },
+        "required": [
+          "application",
+          "returnTo"
+        ],
+        "additionalProperties": false
+      },
+      "ConsentContext": {
+        "type": "object",
+        "properties": {
+          "application": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Registered service name"
+              },
+              "origin": {
+                "type": "string",
+                "description": "Registered callback origin"
+              }
+            },
+            "required": [
+              "name",
+              "origin"
+            ],
+            "additionalProperties": false
+          },
+          "purpose": {
+            "type": "string",
+            "description": "Purpose configured by the administrator"
+          },
+          "noticeVersion": {
+            "type": "string",
+            "description": "Consent text version"
+          },
+          "policyVersion": {
+            "type": "integer"
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "scope": {
+                  "type": "string",
+                  "enum": [
+                    "identity:read",
+                    "profile",
+                    "email",
+                    "phone",
+                    "phone:match",
+                    "line",
+                    "assurance"
+                  ]
+                },
+                "required": {
+                  "type": "boolean"
+                },
+                "title": {
+                  "type": "string",
+                  "description": "Field group label"
+                },
+                "detail": {
+                  "type": "string",
+                  "description": "Disclosure explanation"
+                }
+              },
+              "required": [
+                "scope",
+                "required",
+                "title",
+                "detail"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "application",
+          "purpose",
+          "noticeVersion",
+          "policyVersion",
+          "scopes"
+        ],
+        "additionalProperties": false
+      },
+      "SharingPolicy": {
+        "type": "object",
+        "properties": {
+          "scopes": {
+            "type": "array",
+            "maxItems": 7,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "identity:read",
+                "profile",
+                "email",
+                "phone",
+                "phone:match",
+                "line",
+                "assurance"
+              ]
+            }
+          },
+          "purpose": {
+            "type": "string",
+            "description": "Concrete purpose shown to the user",
+            "minLength": 10,
+            "maxLength": 500
+          }
+        },
+        "required": [
+          "scopes",
+          "purpose"
+        ],
+        "additionalProperties": false
+      },
+      "AccessPolicy": {
+        "type": "object",
+        "properties": {
+          "registration": {
+            "type": "string",
+            "enum": [
+              "closed",
+              "invite",
+              "open"
+            ]
+          },
+          "defaultRoleId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "requirePhone": {
+            "type": "boolean"
+          },
+          "requireLine": {
+            "type": "boolean"
+          },
+          "minimumMfa": {
+            "type": "string",
+            "enum": [
+              "standard",
+              "strong"
+            ]
+          },
+          "requiredScopes": {
+            "type": "array",
+            "maxItems": 7,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "identity:read",
+                "profile",
+                "email",
+                "phone",
+                "phone:match",
+                "line",
+                "assurance"
+              ]
+            }
+          },
+          "registrationLimit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100000
+          },
+          "pendingDays": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 30
+          },
+          "inactiveDays": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 30,
+            "maximum": 3650
+          },
+          "noticeDays": {
+            "type": "integer",
+            "minimum": 7,
+            "maximum": 90
+          },
+          "recoveryDays": {
+            "type": "integer",
+            "minimum": 7,
+            "maximum": 90
+          }
+        },
+        "required": [
+          "registration",
+          "defaultRoleId",
+          "requirePhone",
+          "requireLine",
+          "minimumMfa",
+          "requiredScopes",
+          "registrationLimit",
+          "pendingDays",
+          "inactiveDays",
+          "noticeDays",
+          "recoveryDays"
+        ],
+        "additionalProperties": false
+      }
+    }
+  }
+}

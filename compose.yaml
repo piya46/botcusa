@@ -1,0 +1,38 @@
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_DB: cusa
+      POSTGRES_USER: cusa
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cusa -d cusa"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+  app:
+    profiles: [live]
+    build: .
+    env_file: .env
+    environment:
+      APP_MODE: live
+      HOST: 0.0.0.0
+      PORT: 3001
+      DATA_DIR: /app/data
+      DATABASE_URL: postgresql://cusa:${POSTGRES_PASSWORD}@db:5432/cusa
+    ports:
+      - "127.0.0.1:3001:3001"
+    volumes:
+      - attachment_data:/app/data
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+volumes:
+  postgres_data:
+  attachment_data:
