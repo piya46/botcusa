@@ -56,16 +56,17 @@ cusa/                 Application Root
 
 ```dotenv
 APP_ORIGIN=https://bot.your-domain.com
-DATABASE_URL="mysql://DB_USER:URL_ENCODED_PASSWORD@DB_HOST:3306/DB_NAME"
+DATABASE_URL="mysql://DB_USER:URL_ENCODED_PASSWORD@localhost:3306/DB_NAME"
+MYSQL_SSL_CA=
 WORKER_MODE=opportunistic
 CUSA_SSO_ORIGIN=https://sso.reunion.scicu-alumni.com
 CUSA_CLIENT_ID=APPLICATION_UUID_FROM_CUSA
 CUSA_API_KEY=BACKEND_API_KEY_FROM_CUSA
 ```
 
-ใช้ host/port ที่ Plesk แจ้ง ไม่เดาว่าเป็น localhost เสมอ และ percent-encode รหัสผ่านใน URL หากมีอักขระพิเศษ ดูตัวอย่างใน [คู่มือ .env](ENVIRONMENT.md) ถ้าฐานข้อมูลใช้ TLS ให้เพิ่ม `?ssl=true` และตั้ง `MYSQL_SSL_CA` เมื่อมี CA เฉพาะ
+โฮสต์นี้ใช้ฐานข้อมูลบนเครื่องเดียวกับแอป: `localhost:3306` และไม่ใช้ไฟล์ CA ให้เว้น `MYSQL_SSL_CA` ว่าง โดย percent-encode รหัสผ่านใน URL หากมีอักขระพิเศษ ดูตัวอย่างใน [คู่มือ .env](ENVIRONMENT.md) สำหรับโฮสต์อื่นที่บังคับ TLS ให้เพิ่ม `?ssl=true` และตั้ง `MYSQL_SSL_CA` เฉพาะเมื่อผู้ให้บริการกำหนด
 
-เก็บ `DATA_ENCRYPTION_KEY` ไว้ชุดเดิมตลอด เจ้าหน้าที่ใช้ CUSA SSO เท่านั้น ให้ CUSA ลงทะเบียน callback `/api/auth/sso/callback` และสร้างบทบาท `admin`, `agent`, `reviewer` ของ application นี้ API key ต้องมี `identity:read`, `token:introspect` และ `token:revoke` ไม่ต้องตั้งรหัสผู้ดูแลในแอป ดูตารางสิทธิ์ใน [คู่มือ .env](ENVIRONMENT.md#9-cusa-sso--ขอจากผู้ดูแลระบบ-cusa)
+เก็บ `DATA_ENCRYPTION_KEY` ไว้ชุดเดิมตลอด เจ้าหน้าที่ใช้ CUSA SSO เท่านั้น ให้ CUSA ลงทะเบียน Redirect URI เดียว `https://bot.reunion.scicu-alumni.com/api/auth/callback` ใช้ร่วมกันทั้งเจ้าหน้าที่และการผูก LINE ระบบแยกขั้นตอนด้วย `state` ฝั่งเซิร์ฟเวอร์ หากใช้โดเมนอื่นให้เปลี่ยนให้ตรง `APP_ORIGIN` สร้างบทบาท `admin`, `agent`, `reviewer` ของ application นี้ API key ต้องมี `identity:read`, `token:introspect` และ `token:revoke` ไม่ต้องตั้งรหัสผู้ดูแลในแอป ดูตารางสิทธิ์ใน [คู่มือ .env](ENVIRONMENT.md#9-cusa-sso--ขอจากผู้ดูแลระบบ-cusa)
 
 ถ้ามี SSH ใช้คำสั่งแทนได้:
 
@@ -90,6 +91,8 @@ sh install.sh
 
 กด **Enable Node.js / Restart App** แล้วตรวจ `/api/health` ว่าตอบ HTTP 200 จากนั้นเปิด `/admin/overview` บนโดเมนจริง ต้องเห็นหน้าเข้าสู่ระบบ ไม่มีปุ่มสลับบัญชีทดลอง ไม่ต้องเปิดพอร์ต 3001 สู่ภายนอก เพราะ Passenger จัดการการรับ HTTP ให้
 
+สำหรับโดเมน `bot.reunion.scicu-alumni.com` คง `HOST=127.0.0.1` และ `PORT=3001` แล้วตั้ง `APP_ORIGIN=https://bot.reunion.scicu-alumni.com` IP สาธารณะที่แสดงใน Plesk ใช้สำหรับชี้ DNS ไม่ต้องนำมาแทน `HOST` เข้าเว็บผ่านโดเมนโดยไม่เติม `:3001` หรือ `/public` ดู [รายละเอียด HOST/PORT](ENVIRONMENT.md#1-ค่าพื้นฐานของแอป)
+
 ถ้าโฮสต์จำกัด RAM จน build ไม่ผ่าน ให้ build บนเครื่องที่รองรับก่อน แล้วอัปโหลด `dist` และ `dist-server` ด้วย จากนั้นรัน **install:plesk** พร้อม argument `--skip-build` ตัวติดตั้งยังลง dependencies และตรวจฐานข้อมูล
 
 ## 3. งานเบื้องหลังโดยไม่ใช้ Scheduled Tasks
@@ -111,7 +114,7 @@ sh install.sh
 
 - LINE webhook: `https://bot.your-domain.com/api/webhook`
 - LIFF endpoint: `https://bot.your-domain.com/connect`
-- CUSA callback: `https://bot.your-domain.com/api/auth/callback`
+- CUSA callback (ค่าเดียวสำหรับเจ้าหน้าที่และผูก LINE): `https://bot.reunion.scicu-alumni.com/api/auth/callback` หรือโดเมนที่ตรง `APP_ORIGIN`
 - เจ้าหน้าที่: หน้า **ตั้งค่าระบบ → LINE และการเชื่อมต่อ → ตั้งค่า LINE**
 - Loading: `LINE_LOADING_ENABLED=true`, `LINE_LOADING_SECONDS=30`
 

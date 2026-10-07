@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { installGroups, type InstallInput } from '../../shared/install';
 import { staffRoles } from '../../shared/roles';
+import { CUSA_CALLBACK_PATH } from '../../shared/sso';
 
 type FieldProps = { label: string; hint?: string; children: ReactNode; wide?: boolean };
 function Field({ label, hint, children, wide }: FieldProps) {
@@ -28,7 +29,15 @@ function Field({ label, hint, children, wide }: FieldProps) {
 }
 const initial: InstallInput = {
   origin: location.protocol === 'https:' ? location.origin : '',
-  database: { host: '', port: 3306, name: '', user: '', password: '', tls: false, caFile: '' },
+  database: {
+    host: 'localhost',
+    port: 3306,
+    name: '',
+    user: '',
+    password: '',
+    tls: false,
+    caFile: '',
+  },
   services: {
     LINE_LOADING_ENABLED: 'true',
     LINE_LOADING_SECONDS: '30',
@@ -376,9 +385,12 @@ export function Install() {
                       กำหนดบทบาท <code>admin</code> ให้ผู้ดูแลก่อนเข้าใช้งานครั้งแรก
                     </p>
                     <p>
-                      ลงทะเบียน callback เจ้าหน้าที่:
+                      ลงทะเบียน callback เดียวสำหรับเจ้าหน้าที่และผูก LINE:
                       <br />
-                      <code>{form.origin || 'https://โดเมนของคุณ'}/api/auth/sso/callback</code>
+                      <code>
+                        {form.origin || 'https://โดเมนของคุณ'}
+                        {CUSA_CALLBACK_PATH}
+                      </code>
                     </p>
                   </div>
                 </>
@@ -389,7 +401,10 @@ export function Install() {
                     สร้างฐานข้อมูลเปล่าใน Plesk → Databases ก่อน ระบบสร้างตารางให้
                   </p>
                   <div className="install-fields">
-                    <Field label="Database host" hint="ใช้ host ที่ Plesk แจ้ง เช่น localhost">
+                    <Field
+                      label="Database host"
+                      hint="localhost สำหรับฐานข้อมูลบนเซิร์ฟเวอร์เดียวกับแอป"
+                    >
                       <input
                         value={form.database.host}
                         onChange={(e) => database('host', e.target.value.trim())}

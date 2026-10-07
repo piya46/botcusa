@@ -3,6 +3,8 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { Agent } from '../shared/types.js';
 import { staffRole } from '../shared/roles.js';
+import { CUSA_CALLBACK_PATH } from '../shared/sso.js';
+import type { SsoCallbackHandler } from './sso-callback.js';
 import type { Config } from './config.js';
 import { audit, type Database } from './db.js';
 import type { Fetcher } from './providers.js';
@@ -15,7 +17,6 @@ import {
   STAFF_SESSION_MS,
 } from './staff-refresh.js';
 
-const callbackPath = '/api/auth/sso/callback';
 const activeSchema = profileSchema.extend({ active: z.literal(true), exp: z.number().int() });
 async function introspect(config: Config, accessToken: string, sub: string, fetcher: Fetcher) {
   let response: Response;
@@ -81,7 +82,7 @@ export function registerStaffSso(
   db: Database,
   config: Config,
   fetcher: Fetcher = fetch,
-) {
+): SsoCallbackHandler {
   app.post(
     '/api/auth/sso/start',
     { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } },
@@ -101,7 +102,7 @@ export function registerStaffSso(
         [tokenHash(state), tokenHash(browser), encrypt(verifier, config.encryptionKey)],
       );
       reply.setCookie('cusa_staff_login', browser, {
-        path: callbackPath,
+        path: CUSA_CALLBACK_PATH,
         httpOnly: true,
         secure: true,
         sameSite: 'lax',
@@ -111,7 +112,7 @@ export function registerStaffSso(
       url.search = new URLSearchParams({
         response_type: 'code',
         client_id: config.ssoClientId,
-        redirect_uri: config.origin + callbackPath,
+        redirect_uri: config.origin + CUSA_CALLBACK_PATH,
         state,
         code_challenge: createHash('sha256').update(verifier).digest('base64url'),
         code_challenge_method: 'S256',
@@ -120,33 +121,13 @@ export function registerStaffSso(
       return { url: url.toString() };
     },
   );
-  app.get(callbackPath, async (request, reply) => {
-    const parsed = z
-      .object({
-        state: z.string().regex(/^[A-Za-z0-9_-]{32,128}$/),
-        code: z
-          .string()
-          .regex(/^[A-Za-z0-9_-]{43}$/)
-          .optional(),
-        error: z.string().optional(),
-      })
-      .safeParse(request.query);
-    const browser = request.cookies.cusa_staff_login;
-    reply.clearCookie('cusa_staff_login', { path: callbackPath, secure: true, sameSite: 'lax' });
-    if (!parsed.success || !browser || config.demo) return reply.redirect('/admin?auth=invalid');
-    const [transaction] = await db.query(
-      'DELETE FROM staff_sso_transactions WHERE state_hash=$1 AND browser_hash=$2 AND expires_at>now() RETURNING *',
-      [tokenHash(parsed.data.state), tokenHash(browser)],
-    );
-    if (!transaction || !parsed.data.code || parsed.data.error)
-      return reply.redirect('/admin?auth=invalid');
+  return async (request, reply, transaction, code) => {
     try {
       const grant = await exchangeCusaGrant(
         config,
-        parsed.data.code,
+        code,
         decrypt(transaction.verifier, config.encryptionKey),
         fetcher,
-        callbackPath,
         true,
       );
       const identity = await introspect(config, grant.accessToken, grant.profile.sub, fetcher);
@@ -231,5 +212,5 @@ export function registerStaffSso(
       const reason = error instanceof AppError && error.statusCode === 409 ? 'conflict' : 'denied';
       return reply.redirect(`/admin?auth=${reason}`);
     }
-  });
+  };
 }

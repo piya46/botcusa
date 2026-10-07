@@ -34,6 +34,8 @@ import { createDataset, createExample, reviewExample, assertTrainingEnabled } fr
 import { logoutStaff } from './staff-refresh.js';
 import { registerStaffSso, authenticateStaff } from './staff-sso.js';
 import { registerSso } from './sso.js';
+import { registerSsoCallback } from './sso-callback.js';
+import { CUSA_CALLBACK_PATH } from '../shared/sso.js';
 import { imageType, readFileContent, storeFile, deleteFile, verifyMedia } from './media.js';
 import { lineRequest, type Fetcher } from './providers.js';
 import {
@@ -145,10 +147,9 @@ export async function buildApp(
       '/api/install/status',
       '/api/auth/login',
       '/api/auth/sso/start',
-      '/api/auth/sso/callback',
       '/api/auth/logout',
       '/api/auth/demo',
-      '/api/auth/callback',
+      CUSA_CALLBACK_PATH,
       '/api/connect/config',
       '/api/connect/start',
       '/api/webhook',
@@ -835,7 +836,7 @@ export async function buildApp(
       demo: config.demo,
       origin: config.origin,
       webhookUrl: `${config.origin}/api/webhook`,
-      callbackUrl: `${config.origin}/api/auth/callback`,
+      callbackUrl: config.origin + CUSA_CALLBACK_PATH,
       chatRetentionDays: config.chatRetentionDays,
       datasetRetentionDays: config.datasetRetentionDays,
       failedJobs,
@@ -967,8 +968,9 @@ export async function buildApp(
     });
     return { ok: true };
   });
-  registerSso(app, db, config, options.fetcher);
-  registerStaffSso(app, db, config, options.fetcher);
+  const memberCallback = registerSso(app, db, config, options.fetcher);
+  const staffCallback = registerStaffSso(app, db, config, options.fetcher);
+  registerSsoCallback(app, db, config, { member: memberCallback, staff: staffCallback });
   if (options.serveStatic && existsSync(resolve('dist'))) {
     await app.register(staticFiles, { root: resolve('dist'), prefix: '/' });
     app.setNotFoundHandler((request, reply) =>

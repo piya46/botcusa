@@ -2,6 +2,8 @@ import { requestCusaToken } from './sso-tokens.js';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import type { FastifyInstance } from 'fastify';
+import { CUSA_CALLBACK_PATH } from '../shared/sso.js';
+import type { SsoCallbackHandler } from './sso-callback.js';
 import type { Config } from './config.js';
 import { audit, type Database } from './db.js';
 import { queueRichMenu } from './rich-menus.js';
@@ -23,7 +25,6 @@ export async function exchangeCusaGrant(
   code: string,
   verifier: string,
   fetcher: Fetcher = fetch,
-  callbackPath = '/api/auth/callback',
   requestRefreshToken = false,
 ) {
   const origin = new URL(config.ssoOrigin);
@@ -32,7 +33,7 @@ export async function exchangeCusaGrant(
     {
       grant_type: 'authorization_code',
       code,
-      redirect_uri: `${config.origin}${callbackPath}`,
+      redirect_uri: config.origin + CUSA_CALLBACK_PATH,
       code_verifier: verifier,
       ...(requestRefreshToken ? { request_refresh_token: true } : {}),
     },
@@ -69,7 +70,7 @@ export function registerSso(
   db: Database,
   config: Config,
   fetcher: Fetcher = fetch,
-) {
+): SsoCallbackHandler {
   app.get('/api/connect/config', async () => ({
     liffId: config.liffId,
     available:
@@ -114,7 +115,7 @@ export function registerSso(
       [tokenHash(state), tokenHash(browser), line.sub, encrypt(verifier, config.encryptionKey)],
     );
     reply.setCookie('cusa_link', browser, {
-      path: '/api/auth/callback',
+      path: CUSA_CALLBACK_PATH,
       httpOnly: true,
       secure: true,
       sameSite: 'lax',
@@ -124,7 +125,7 @@ export function registerSso(
     url.search = new URLSearchParams({
       response_type: 'code',
       client_id: config.ssoClientId,
-      redirect_uri: `${config.origin}/api/auth/callback`,
+      redirect_uri: config.origin + CUSA_CALLBACK_PATH,
       state,
       code_challenge: createHash('sha256').update(verifier).digest('base64url'),
       code_challenge_method: 'S256',
@@ -132,30 +133,11 @@ export function registerSso(
     }).toString();
     return { url: url.toString() };
   });
-  app.get('/api/auth/callback', async (request, reply) => {
-    const input = z
-      .object({
-        state: z.string().regex(/^[A-Za-z0-9_-]{32,128}$/),
-        code: z
-          .string()
-          .regex(/^[A-Za-z0-9_-]{43}$/)
-          .optional(),
-        error: z.string().optional(),
-      })
-      .safeParse(request.query);
-    if (!input.success || !request.cookies.cusa_link)
-      return reply.redirect('/connect?result=invalid');
-    const [transaction] = await db.query(
-      `DELETE FROM sso_transactions WHERE state_hash=$1 AND browser_hash=$2 AND expires_at>now() RETURNING *`,
-      [tokenHash(input.data.state), tokenHash(request.cookies.cusa_link)],
-    );
-    reply.clearCookie('cusa_link', { path: '/api/auth/callback', secure: true, sameSite: 'lax' });
-    if (!transaction || input.data.error || !input.data.code)
-      return reply.redirect('/connect?result=invalid');
+  return async (_request, reply, transaction, code) => {
     try {
       const profile = await exchangeCusa(
         config,
-        input.data.code,
+        code,
         decrypt(transaction.verifier, config.encryptionKey),
         fetcher,
       );
@@ -190,5 +172,5 @@ export function registerSso(
         `/connect?result=${error instanceof AppError && error.statusCode === 409 ? 'conflict' : 'failed'}`,
       );
     }
-  });
+  };
 }

@@ -155,8 +155,9 @@ Worker ตรวจเคสเกินกำหนดทุกประมา�
 - ตรวจ `token_type`, scope `identity:read`, `userinfo.aud` และ application-scoped roles; ฟิลด์ชื่อ/อีเมล/สังกัดอาจไม่มีหากผู้ใช้ไม่ได้อนุญาต
 - code/state ใช้ครั้งเดียว ผูกกับ browser cookie และไม่ retry code เมื่อไม่ทราบผล
 - เจ้าหน้าที่ใช้ rotating refresh token เพื่อทำงานต่อเนื่องสูงสุด 8 ชั่วโมง หรือสั้นกว่าตามอายุ MFA session/API key ของ CUSA Access token ยังมีอายุสูงสุด 300 วินาที และทุก protected API ตรวจ introspection โดยไม่มี identity cache
-- เจ้าหน้าที่เข้า **CUSA SSO** ผ่าน `/api/auth/sso/callback` ใช้ role codes `admin`, `agent`, `reviewer` ของ application นี้ Member Desk บังคับสิทธิ์ที่ API ไม่สร้าง local admin/password และไม่ให้สมาชิกทั่วไปเข้าหลังบ้าน
-- การผูกสมาชิกกับ LINE ใช้ `/api/auth/callback` แยกจากการเข้าใช้ของเจ้าหน้าที่ ข้อมูลสมาชิกเป็น snapshot ณ ครั้งที่ผูกล่าสุด
+- ลงทะเบียน CUSA Redirect URI **ค่าเดียว** คือ `APP_ORIGIN` ตามด้วย `/api/auth/callback` ใช้ร่วมกันทั้งเจ้าหน้าที่และผูก LINE ระบบเลือกขั้นตอนจาก `state` ที่เก็บในฐานข้อมูล ตรวจ browser cookie และ PKCE ก่อนดำเนินการ
+- เจ้าหน้าที่เข้า **CUSA SSO** ใช้ role codes `admin`, `agent`, `reviewer` ของ application นี้ Member Desk บังคับสิทธิ์ที่ API ไม่สร้าง local admin/password และไม่ให้สมาชิกทั่วไปเข้าหลังบ้าน
+- การผูกสมาชิกกับ LINE ไม่สร้างเซสชันเจ้าหน้าที่ แม้สมาชิกนั้นมีบทบาท `admin` ข้อมูลสมาชิกเป็น snapshot ณ ครั้งที่ผูกล่าสุด
 - API key ต้องมี `identity:read`, `token:introspect` และ `token:revoke` เจ้าหน้าที่ถูกสร้างเมื่อผ่าน SSO ครั้งแรกโดยผูก `sub` ไม่ผูกบัญชีเก่าด้วยอีเมล
 - ต่ออายุเมื่อมีคำขอและ access token ใกล้หมดอายุ ไม่ต้องใช้ cron เก็บ token เข้ารหัสทั้งคู่และล็อกการหมุนผ่าน DB ข้าม process; timeout/ผลลัพธ์ไม่แน่นอนจะให้เข้า SSO ใหม่ ไม่ใช้ refresh token เดิมซ้ำ
 - อายุเซสชันเป็นเวลาสิ้นสุดตายตัว ไม่เลื่อนตามการใช้งาน เซสชันเก่าต้องเข้า SSO ใหม่เพื่อรับ refresh token การอัปเดตเพิ่มตารางโดยไม่ต้องติดตั้งใหม่

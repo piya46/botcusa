@@ -57,7 +57,17 @@ Plesk **Custom Environment Variables** ใช้แทนไฟล์ได้ �
 | `DATA_DIR` | `.data` | โฟลเดอร์เก็บไฟล์แนบ/เอกสารเข้ารหัส เทียบจาก Application Root ต้องเขียนได้และเก็บถาวรนอก Document Root |
 | `WORKER_MODE` | `opportunistic` | เลือกโหมดสำหรับ shared hosting ไม่มี cron อ่านข้อจำกัดด้านล่าง |
 
-`APP_ORIGIN` ของคุณอาจเป็น `https://bot.reunion.scicu-alumni.com` ถ้านี่คือโดเมนที่สร้างให้แอปจริง อย่าใส่ URL ของ CUSA SSO หรือ URL ของ Plesk control panel ลงช่องนี้
+สำหรับโดเมนใน Plesk ของคุณ ใช้:
+
+```dotenv
+HOST=127.0.0.1
+PORT=3001
+APP_ORIGIN=https://bot.reunion.scicu-alumni.com
+```
+
+IP `203.170.190.137` ที่แสดงใน Plesk เป็น IP สาธารณะของเว็บ ใช้กับการชี้ DNS ส่วน `HOST` และ `PORT` เป็นค่าเริ่มต้นการรับงานของ Node.js ภายในเครื่อง เมื่อเริ่มผ่าน Plesk/Passenger ด้วย `app.cjs` Passenger จะจัดการ socket และส่งคำขอเข้าแอปเอง จึงคงสองค่านี้ไว้ได้ ไม่ต้องเปิดพอร์ต 3001 สู่ภายนอก ดู [การจัดการพอร์ตของ Passenger](https://www.phusionpassenger.com/docs/advanced_guides/in_depth/node/reverse_port_binding.html)
+
+เข้าเว็บผ่าน `https://bot.reunion.scicu-alumni.com` โดยไม่เติม `:3001` หรือ `/public` ส่วน `public` เป็น Document Root ในระบบไฟล์ `HOST`/`PORT` ชุดนี้แยกจากฐานข้อมูล ซึ่งยังใช้ `localhost:3306` ใน `DATABASE_URL`
 
 `WORKER_MODE=opportunistic` หมายถึงทำคิวเมื่อแอปเริ่มและเมื่อมี HTTP เข้ามา พร้อมตรวจคิวต่อขณะ process ยังอยู่ หากโฮสต์หยุดแอป งานตั้งเวลา/แจ้งเกิน 5 นาที/retry/retention จะรอจน request ถัดไป **ค่านี้ไม่ได้ทำให้แอปทำงานตลอด 24 ชั่วโมง** ส่วน `continuous` ใช้เมื่อมีพื้นที่รัน process ต่อเนื่องจริง เช่น VPS; เปลี่ยนค่านี้อย่างเดียวไม่ป้องกัน Plesk พักแอป
 
@@ -74,10 +84,11 @@ Plesk **Custom Environment Variables** ใช้แทนไฟล์ได้ �
 
 อ้างอิงขั้นตอนสร้างฐานข้อมูล: [Plesk](https://support.plesk.com/hc/en-us/articles/12377341716759-How-to-create-a-database-in-Plesk)
 
-ประกอบ URL ตามรูปแบบ:
+สำหรับโฮสต์นี้ ฐานข้อมูลอยู่เครื่องเดียวกับแอป ใช้ `localhost:3306` และไม่มีไฟล์ CA ประกอบ URL ดังนี้:
 
 ```dotenv
-DATABASE_URL="mysql://DB_USER:URL_ENCODED_PASSWORD@DB_HOST:3306/DB_NAME"
+DATABASE_URL="mysql://DB_USER:URL_ENCODED_PASSWORD@localhost:3306/DB_NAME"
+MYSQL_SSL_CA=
 ```
 
 ตัวอย่างสมมติ:
@@ -86,12 +97,12 @@ DATABASE_URL="mysql://DB_USER:URL_ENCODED_PASSWORD@DB_HOST:3306/DB_NAME"
 | --- | --- |
 | User | `account_cusa_app` |
 | Password | `Example@123#` |
-| Host | `127.0.0.1` |
+| Host | `localhost` |
 | Port | `3306` |
 | Database | `account_cusa` |
 
 ```dotenv
-DATABASE_URL="mysql://account_cusa_app:Example%40123%23@127.0.0.1:3306/account_cusa"
+DATABASE_URL="mysql://account_cusa_app:Example%40123%23@localhost:3306/account_cusa"
 ```
 
 ตัวอย่างการ encode: `@` → `%40`, `#` → `%23`, `:` → `%3A`, `/` → `%2F`, `?` → `%3F`, `%` → `%25`, ช่องว่าง → `%20` ตัวอักษรทั่วไป/ตัวเลข/`-`/`_` ใช้ตรง ๆ ได้ อย่า encode URL ทั้งบรรทัด และอย่า encode `%40` ที่แปลงแล้วซ้ำ
@@ -103,6 +114,8 @@ openssl rand -hex 24
 ```
 
 คำสั่งนี้สร้างรหัสให้เลือกใช้ **ไม่ได้เปลี่ยนรหัสใน Plesk ให้** หากรหัส URL-safe นี้ไม่ตรงกับรหัส DB user จะเชื่อมต่อไม่ได้ `mariadb://...` ใช้ได้เช่นกัน; `mysql://...` ใช้เชื่อม MariaDB ได้
+
+`localhost` หมายถึงเครื่องที่รัน Node.js เมื่อติดตั้งบน Plesk จะเชื่อมฐานข้อมูลในเซิร์ฟเวอร์นั้น แต่ถ้ารันบนเครื่องพัฒนาจะหมายถึงฐานข้อมูลในเครื่องพัฒนา
 
 ### MYSQL_SSL_CA — เฉพาะฐานข้อมูลที่ใช้ TLS
 
@@ -290,9 +303,8 @@ npm run config:models
 
 ```text
 ชื่อบริการ: CUSA Member Desk
-Origin: https://bot.example.com
-Redirect URI เจ้าหน้าที่: https://bot.example.com/api/auth/sso/callback
-Redirect URI ผูกสมาชิกกับ LINE: https://bot.example.com/api/auth/callback
+Origin: https://bot.reunion.scicu-alumni.com
+Redirect URI: https://bot.reunion.scicu-alumni.com/api/auth/callback
 Flow: Authorization Code + PKCE S256
 Claim scopes ที่แอปขอ: identity:read profile email
 API key permissions: identity:read, token:introspect และ token:revoke
@@ -301,7 +313,9 @@ Role สำหรับสมาชิก LINE: ใช้ role สมาชิ�
 ต้องการ: application UUID, backend API key, เปิด service และกำหนด admin ให้ผู้ดูแลรายแรก
 ```
 
-เปลี่ยนโดเมนก่อนส่ง ขอค่าเฉพาะแอปนี้ตาม [OpenAPI CUSA 1.5.0](cusa-sso.openapi.json) เอกสารที่ให้มาไม่ได้ระบุขั้นตอนหน้า Admin สำหรับออกคีย์ จึงต้องให้ผู้ดูแล CUSA ลงทะเบียน/ออกคีย์ ไม่สามารถสร้าง `CUSA_CLIENT_ID` โดยสุ่ม UUID เองแล้วใช้งานได้
+ลงทะเบียน **Redirect URI เพียงค่าเดียว** ตามด้านบน ใช้ร่วมกันทั้งการลงชื่อเข้าใช้ของเจ้าหน้าที่และการผูกสมาชิกกับ LINE ระบบแยกขั้นตอนจาก `state` ที่เก็บในฐานข้อมูลและตรวจ cookie ของเบราว์เซอร์ ไม่ต้องสร้าง application หรือ callback เพิ่ม การผูก LINE จะไม่สร้างเซสชันเจ้าหน้าที่ แม้บัญชี CUSA นั้นมีบทบาท `admin`
+
+หากใช้โดเมนอื่นให้เปลี่ยน Origin และ Redirect URI ให้ตรง `APP_ORIGIN` ขอค่าเฉพาะแอปนี้ตาม [OpenAPI CUSA 1.5.0](cusa-sso.openapi.json) เอกสารที่ให้มาไม่ได้ระบุขั้นตอนหน้า Admin สำหรับออกคีย์ จึงต้องให้ผู้ดูแล CUSA ลงทะเบียน/ออกคีย์ ไม่สามารถสร้าง `CUSA_CLIENT_ID` โดยสุ่ม UUID เองแล้วใช้งานได้
 
 URL `/login?auth=success&status=mfa_required` ที่เห็นในเบราว์เซอร์ไม่ใช่ API key หรือหลักฐานว่าผูกสมาชิกสำเร็จ แอปจะเริ่ม authorize และแลก code ตามสัญญา API เอง
 

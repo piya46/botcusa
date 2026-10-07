@@ -39,7 +39,7 @@ async function fixture() {
       exchanges++;
       assert.equal(init.headers['X-API-Key'], config.ssoApiKey);
       assert.equal(body.client_id, undefined);
-      assert.equal(body.redirect_uri, config.origin + '/api/auth/sso/callback');
+      assert.equal(body.redirect_uri, config.origin + '/api/auth/callback');
       return Response.json({
         access_token: 'A'.repeat(43),
         token_type: 'Bearer',
@@ -83,7 +83,7 @@ async function fixture() {
       response,
       url,
       callback:
-        '/api/auth/sso/callback?state=' + url.searchParams.get('state') + '&code=' + 'B'.repeat(43),
+        '/api/auth/callback?state=' + url.searchParams.get('state') + '&code=' + 'B'.repeat(43),
       cookie: response.cookies.map((c) => `${c.name}=${c.value}`).join('; '),
     };
   };

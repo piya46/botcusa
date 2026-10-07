@@ -54,7 +54,7 @@ async function fixture() {
       if (body.grant_type === 'authorization_code') {
         assert.equal(body.request_refresh_token, true);
         assert.equal(body.client_id, undefined);
-        assert.equal(body.redirect_uri, config.origin + '/api/auth/sso/callback');
+        assert.equal(body.redirect_uri, config.origin + '/api/auth/callback');
         return Response.json(result());
       }
       assert.deepEqual(body, { grant_type: 'refresh_token', refresh_token: refresh() });
@@ -107,7 +107,7 @@ async function fixture() {
     });
     const state = new URL(started.json().url).searchParams.get('state');
     const response = await app.inject({
-      url: `/api/auth/sso/callback?state=${state}&code=${'X'.repeat(43)}`,
+      url: `/api/auth/callback?state=${state}&code=${'X'.repeat(43)}`,
       headers: { cookie: started.cookies.map((c) => `${c.name}=${c.value}`).join('; ') },
     });
     assert.equal(response.headers.location, '/admin/overview', response.body);
