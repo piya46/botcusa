@@ -37,13 +37,8 @@ export async function seed(db: Database, config: Config) {
       }),
     ],
   );
-  if (!config.demo) {
-    await db.query(
-      `INSERT INTO agents(name,email,password_hash,role) VALUES('ผู้ดูแลระบบ',$1,$2,'ADMIN') ON CONFLICT(email) DO NOTHING`,
-      [config.adminEmail, hashPassword(config.adminPassword!)],
-    );
-    return;
-  }
+  // Live staff accounts are provisioned only after verified CUSA SSO authorization.
+  if (!config.demo) return;
   for (const a of DEMO_AGENTS)
     await db.query(
       `INSERT INTO agents(id,name,email,password_hash,role) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`,

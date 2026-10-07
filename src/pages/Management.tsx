@@ -808,7 +808,7 @@ export function SettingsPage() {
         title="ตั้งค่าระบบ"
         description="LINE · AI · เจ้าหน้าที่ · นโยบายข้อมูล"
       >
-        <button className="button" onClick={() => setAddAgent(true)}>
+        <button hidden={!data.demo} className="button" onClick={() => setAddAgent(true)}>
           <Plus size={16} />
           เพิ่มเจ้าหน้าที่
         </button>
@@ -935,6 +935,12 @@ export function SettingsPage() {
           </section>
         </div>
         <div hidden={settingsTab !== 'connections'}>
+          {!data.demo && (
+            <div className="form-info">
+              เจ้าหน้าที่ใช้ CUSA SSO · กำหนดบทบาท admin, agent หรือ reviewer ที่ CUSA
+              รายชื่อจะแสดงหลังเข้าใช้ครั้งแรก
+            </div>
+          )}
           <section className="panel settings-panel">
             <div className="panel-heading">
               <h2>
@@ -944,7 +950,7 @@ export function SettingsPage() {
             </div>
             {[
               ['LINE Messaging API', data.integrations.line],
-              ['CUSA SSO · v1.4.0', data.integrations.sso],
+              ['CUSA SSO · v1.5.0', data.integrations.sso],
               ['Gemini', data.integrations.gemini],
               ['แจ้งเตือน Supervisor', data.supervisorAlertsConfigured],
               ['แจ้งเตือนเคสใหม่ส่วนกลาง', data.agentAlertsConfigured],

@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { randomBytes } from 'node:crypto';
+import { z } from 'zod';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -15,16 +16,21 @@ export function getConfig(env: NodeJS.ProcessEnv = process.env) {
   const host = env.HOST ?? '127.0.0.1';
   if (demo && !['127.0.0.1', 'localhost', '::1'].includes(host))
     throw new Error('Demo must bind to loopback only');
-  if (
-    !demo &&
-    (!env.DATABASE_URL ||
-      !env.DATA_ENCRYPTION_KEY ||
-      !origin.startsWith('https://') ||
-      (env.ADMIN_PASSWORD?.length ?? 0) < 12)
-  ) {
-    throw new Error(
-      'Live mode requires DATABASE_URL, DATA_ENCRYPTION_KEY, HTTPS APP_ORIGIN and ADMIN_PASSWORD (12+ characters)',
-    );
+  if (!demo && (!env.DATABASE_URL || !env.DATA_ENCRYPTION_KEY || !origin.startsWith('https://'))) {
+    throw new Error('Live mode requires DATABASE_URL, DATA_ENCRYPTION_KEY, HTTPS APP_ORIGIN');
+  }
+  if (!demo) {
+    const sso = z.url().safeParse(env.CUSA_SSO_ORIGIN);
+    if (
+      !sso.success ||
+      new URL(sso.data).protocol !== 'https:' ||
+      new URL(sso.data).origin !== sso.data ||
+      !z.string().uuid().safeParse(env.CUSA_CLIENT_ID).success ||
+      !env.CUSA_API_KEY?.trim()
+    )
+      throw new Error(
+        'Live mode requires HTTPS CUSA_SSO_ORIGIN, CUSA_CLIENT_ID (application UUID) and CUSA_API_KEY',
+      );
   }
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   let encryptionKey: Buffer;
@@ -63,8 +69,6 @@ export function getConfig(env: NodeJS.ProcessEnv = process.env) {
         ? ('opportunistic' as const)
         : ('continuous' as const),
     encryptionKey,
-    adminEmail: env.ADMIN_EMAIL ?? 'admin@cusa.local',
-    adminPassword: env.ADMIN_PASSWORD,
     lineSecret: env.LINE_CHANNEL_SECRET ?? '',
     lineToken: env.LINE_CHANNEL_ACCESS_TOKEN ?? '',
     lineLoadingEnabled: env.LINE_LOADING_ENABLED !== 'false',

@@ -1,5 +1,6 @@
 node_modules
 .data
+.setup
 dist
 dist-server
 artifacts

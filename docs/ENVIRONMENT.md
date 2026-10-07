@@ -4,10 +4,29 @@
 
 ## เริ่มตรงไหน
 
+### ตั้งผ่านหน้าจอ `/install` (แนะนำ)
+
+1. อัปโหลดโปรเจกต์ ตั้ง Application Root เป็น `cusa`, Document Root เป็น `cusa/public` และ Startup File เป็น `app.cjs`
+2. ใน Plesk → Node.js → Run Script เลือก **`install:web`** เพื่อลง dependencies และ build หน้าติดตั้ง โดยยังไม่ต้องกรอกค่าฐานข้อมูล
+3. Restart App แล้วเปิด **`https://โดเมนของคุณ/install`**
+4. เปิด File Manager → `cusa/.setup/access.key` คัดลอกรหัสมาใส่ในหน้าเว็บ รหัสนี้ใช้เฉพาะการติดตั้งครั้งแรก ไม่ใช่รหัส CUSA SSO และห้ามใส่ใน URL
+5. กรอกโดเมน HTTPS, SSO Origin, Application UUID และ Backend API key ของ CUSA
+6. กรอก host, port, ชื่อฐานข้อมูล, user และ password ที่สร้างจาก Plesk แล้วกด **ทดสอบฐานข้อมูล** ช่อง password ใส่ค่าจริงได้ ระบบ URL-encode ให้เอง ต้องใช้ฐานข้อมูลเปล่า
+7. เติม LINE/Gemini หรือข้ามไปเติมภายหลัง ตรวจรายการแล้วกด **ติดตั้งระบบ**
+8. เมื่อติดตั้งสำเร็จให้ **Restart App ใน Plesk** แล้วเข้า `/admin/overview`
+
+ระบบสร้าง `.env` สิทธิ์ `600`, ตารางฐานข้อมูลและการตั้งค่าเริ่มต้นให้ พร้อมปิดการติดตั้งซ้ำ คีย์เข้ารหัสเดิมใน `.env` หรือ `.data/encryption.key` จะถูกเก็บไว้ ถ้ามี `.env` เดิมจะสำรองที่ `.setup/previous.env` ก่อนแทนที่ ไฟล์ `.setup` ทั้งหมดต้องอยู่นอก `public` และไม่อัปโหลดขึ้น repository
+
+**การทดสอบฐานข้อมูลเป็นการอ่านข้อมูลเท่านั้น** ขั้นตอนติดตั้งจึงตรวจสิทธิ์สร้างตารางจริง ส่วน LINE/Gemini/SSO ต้องทดสอบกับบริการหลังติดตั้ง ไม่แสดงค่าลับจากเซิร์ฟเวอร์กลับในหน้าจอ
+
+กรณีติดตั้งค้าง ระบบยอมให้ลองต่อด้วยค่าชุดเดิมและฐานข้อมูลเดิมที่เริ่มสร้างโดย installer นี้ หาก process หยุดระหว่างติดตั้งและพบ `.setup/apply.lock` ให้หยุดแอปใน Plesk ตรวจว่าไม่มี installer ทำงานอยู่ แล้วลบเฉพาะไฟล์ lock ก่อน Restart App **อย่าลบ `.setup/completed` เพื่อเปิดระบบที่ใช้งานแล้วมาติดตั้งใหม่** การย้ายข้อมูลจากฐานเดิมยังต้องทำแยกต่างหาก
+
+### ตั้งด้วยไฟล์เอง
+
 1. อัปโหลดโปรเจกต์และตั้ง Document Root เป็น `cusa/public`
 2. ใน Plesk → Node.js → Run Script เลือก `install:plesk` ครั้งแรก ตัวติดตั้งจะสร้าง `.env` ใน Application Root เช่น `cusa/.env`
 3. เปิด Plesk → Files/File Manager → `cusa` → `.env` → Edit ถ้าไม่เห็นไฟล์ ให้เปิดการแสดงไฟล์ซ่อน
-4. เติม `APP_ORIGIN`, `DATABASE_URL`, `ADMIN_EMAIL` ก่อน เก็บ key และรหัส admin ที่ตัวติดตั้งสร้างไว้
+4. เติม `APP_ORIGIN`, `DATABASE_URL`, `CUSA_SSO_ORIGIN`, `CUSA_CLIENT_ID`, `CUSA_API_KEY` ก่อน เก็บ encryption key ที่ตัวติดตั้งสร้างไว้
 5. รัน `install:plesk` อีกครั้งเพื่อสร้างตารางและ build จากนั้น Restart App
 6. เติม LINE/Gemini/CUSA ตามฟังก์ชันที่ต้องใช้ แล้ว Restart App ทุกครั้งที่แก้ `.env`
 
@@ -17,8 +36,9 @@
 
 ```dotenv
 APP_ORIGIN=https://bot.example.com
-ADMIN_EMAIL=admin@example.com
-ADMIN_PASSWORD="รหัสที่คุณเก็บไว้"
+CUSA_SSO_ORIGIN=https://sso.reunion.scicu-alumni.com
+CUSA_CLIENT_ID=APPLICATION_UUID_FROM_CUSA
+CUSA_API_KEY=BACKEND_API_KEY_FROM_CUSA
 ```
 
 ถ้าค่ามี `#` หรือช่องว่างให้ครอบด้วย quote เช่น `"..."` รหัสผ่านใน `DATABASE_URL` ยังต้อง URL-encode แม้ครอบ quote แล้ว อย่าใช้เว็บสาธารณะเพื่อแปลงรหัสผ่านจริง
@@ -97,13 +117,11 @@ MYSQL_SSL_CA=/absolute/path/outside/public/mysql-ca.pem
 
 หากยังใช้ PostgreSQL บนเครื่องอื่น โค้ดยังรองรับ `postgresql://...` และ pgvector แต่ไม่จำเป็นสำหรับการติดตั้ง MySQL/MariaDB นี้ การสลับ URL **ไม่ได้ย้ายข้อมูลจากฐานเดิม** ให้ใช้ฐานเปล่าสำหรับการติดตั้งใหม่
 
-## 3. Key เข้ารหัสและบัญชี admin
+## 3. Key เข้ารหัสข้อมูล
 
 | ตัวแปร | จำเป็น | เอามาจากไหน |
 | --- | --- | --- |
 | `DATA_ENCRYPTION_KEY` | ใช่ | installer สร้างสุ่ม 32 bytes แล้ว encode เป็น base64 ให้ใน `.env` |
-| `ADMIN_EMAIL` | ใช่ | คุณกำหนดเอง ใช้เป็นชื่อเข้าสู่ Member Desk เช่นอีเมลผู้ดูแล ไม่ใช่ชื่อ DB user |
-| `ADMIN_PASSWORD` | ใช่ | installer สร้างรหัสสุ่มให้ เปิดดูใน `.env`; หากเปลี่ยนก่อนสร้างบัญชี ต้องอย่างน้อย 12 ตัวอักษร |
 
 กรณีติดตั้งใหม่ด้วยมือ สร้าง encryption key ได้ด้วย:
 
@@ -113,7 +131,7 @@ openssl rand -base64 32
 
 คัดลอกผลหนึ่งบรรทัดใส่ `DATA_ENCRYPTION_KEY` **ทำเฉพาะระบบใหม่ที่ยังไม่มีข้อมูล** เมื่อมีแชตแล้วต้องใช้ key เดิม การเปลี่ยน/สูญหายทำให้อ่านข้อความและไฟล์เดิมไม่ได้ สำรอง key คู่กับฐานข้อมูลและ `.data`
 
-`ADMIN_EMAIL`/`ADMIN_PASSWORD` ใช้สร้าง admin ครั้งแรก ถ้าบัญชีอีเมลนั้นมีอยู่ installer ไม่เปลี่ยนรหัสเดิม การแก้ `.env` จึงไม่ใช่วิธี reset รหัสผู้ใช้เดิม ไม่ต้องใช้รหัส CUSA SSO สำหรับบัญชีเจ้าหน้าที่ของ Member Desk
+ไม่ต้องมี `ADMIN_EMAIL` หรือ `ADMIN_PASSWORD` เจ้าหน้าที่ใช้ CUSA SSO และ Member Desk ตรวจบทบาทของ application นี้ก่อนสร้างบัญชีเมื่อเข้าใช้ครั้งแรก รหัส CUSA ไม่ถูกส่งเข้าหรือเก็บใน Member Desk
 
 ## 4. LINE Messaging API — รับและตอบข้อความ
 
@@ -273,18 +291,51 @@ npm run config:models
 ```text
 ชื่อบริการ: CUSA Member Desk
 Origin: https://bot.example.com
-Redirect URI: https://bot.example.com/api/auth/callback
+Redirect URI เจ้าหน้าที่: https://bot.example.com/api/auth/sso/callback
+Redirect URI ผูกสมาชิกกับ LINE: https://bot.example.com/api/auth/callback
 Flow: Authorization Code + PKCE S256
 Claim scopes ที่แอปขอ: identity:read profile email
-API key permission สำหรับแลก code: identity:read
-ต้องการ: application UUID, backend API key, เปิด service และกำหนด application roles ให้สมาชิกผู้ใช้
+API key permissions: identity:read, token:introspect และ token:revoke
+Role codes สำหรับเจ้าหน้าที่: admin, agent, reviewer (ตัวเล็กตรงตามนี้)
+Role สำหรับสมาชิก LINE: ใช้ role สมาชิกของ CUSA แยกจาก 3 บทบาทเจ้าหน้าที่
+ต้องการ: application UUID, backend API key, เปิด service และกำหนด admin ให้ผู้ดูแลรายแรก
 ```
 
-เปลี่ยนโดเมนก่อนส่ง ขอค่าเฉพาะแอปนี้ตาม [OpenAPI CUSA 1.4.0](cusa-sso.openapi.json) เอกสารที่ให้มาไม่ได้ระบุขั้นตอนหน้า Admin สำหรับออกคีย์ จึงต้องให้ผู้ดูแล CUSA ลงทะเบียน/ออกคีย์ ไม่สามารถสร้าง `CUSA_CLIENT_ID` โดยสุ่ม UUID เองแล้วใช้งานได้
+เปลี่ยนโดเมนก่อนส่ง ขอค่าเฉพาะแอปนี้ตาม [OpenAPI CUSA 1.5.0](cusa-sso.openapi.json) เอกสารที่ให้มาไม่ได้ระบุขั้นตอนหน้า Admin สำหรับออกคีย์ จึงต้องให้ผู้ดูแล CUSA ลงทะเบียน/ออกคีย์ ไม่สามารถสร้าง `CUSA_CLIENT_ID` โดยสุ่ม UUID เองแล้วใช้งานได้
 
 URL `/login?auth=success&status=mfa_required` ที่เห็นในเบราว์เซอร์ไม่ใช่ API key หรือหลักฐานว่าผูกสมาชิกสำเร็จ แอปจะเริ่ม authorize และแลก code ตามสัญญา API เอง
 
-ฟิลด์ชื่อ/อีเมลอาจไม่มีเมื่อผู้ใช้ไม่อนุญาต แต่ต้องได้ scope `identity:read`, audience ตรง application และ application roles ที่อนุญาต ขั้นตอนนี้ผูกตัวตนสมาชิกกับ LINE **บัญชีเจ้าหน้าที่เข้าหน้า Member Desk ยังใช้บัญชี admin/agent แยกกัน**
+ฟิลด์ชื่อ/อีเมลอาจไม่มีเมื่อผู้ใช้ไม่อนุญาต ระบบยึด `sub` ของ CUSA เป็นตัวตน ไม่รวมบัญชีเดิมจากอีเมลอัตโนมัติ `aud` ต้องตรง Application UUID และต้องมี `identity:read`
+
+CUSA ยืนยันตัวตนและส่งชื่อบทบาท ส่วน **Member Desk กำหนดและบังคับสิทธิ์เองที่ API**:
+
+| Role code ที่ CUSA ส่ง | สิทธิ์ใน Member Desk |
+| --- | --- |
+| `admin` | งานเจ้าหน้าที่ทั้งหมด จัดการหน่วยงาน การตั้งค่า LINE/AI/นโยบายข้อมูล บรอดแคสต์ และงานตรวจทาน |
+| `agent` | อ่านบทสนทนา รับ/ตอบ/โอน/ปิดเคสตามผู้รับผิดชอบ เตรียมร่างฐานความรู้และตัวอย่างฝึก |
+| `reviewer` | อ่านบทสนทนา ตรวจ/อนุมัติฐานความรู้และข้อมูลฝึก สร้าง/ส่งออกชุดข้อมูล รับ/ตอบ/โอน/ปิดเคสไม่ได้ |
+
+ชื่อบทบาทแยกตัวเล็กใหญ่ หากมีหลายบทบาทเลือก `admin` ก่อน `reviewer` ก่อน `agent` ผู้ตรวจทานกับเจ้าหน้าที่เป็นคนละหน้าที่ หากต้องทำทั้งสองให้กำหนด `admin` ตามนโยบายองค์กร บทบาท global admin ของ CUSA หรือ `member` ไม่ได้สิทธิ์เข้าหลังบ้านนี้โดยอัตโนมัติ ผู้สร้างข้อมูลอนุมัติตัวอย่างฝึกของตัวเองไม่ได้แม้เป็น admin
+
+ผู้ดูแลรายแรกต้องมี `admin` **ใน application ของ Member Desk** อยู่ก่อน ระบบไม่ยกระดับผู้ที่ล็อกอินคนแรก รายชื่อเจ้าหน้าที่จะปรากฏเมื่อผ่าน SSO ครั้งแรก แล้วจึงจัดเข้าหน่วยงาน/ตั้งแจ้งเตือน LINE ใน Member Desk ได้
+
+**อัปเดตจากบัญชี local เดิม:** เติมค่า CUSA ใน `.env` แล้ว restart แอปจะสร้างตาราง SSO เพิ่มโดยไม่ลบเคสเดิม ช่องทางล็อกอินด้วยอีเมล/รหัสเดิมถูกปิด ถ้าอีเมลชนบัญชีเดิมระบบจะปฏิเสธ ต้องทำการย้ายตัวตนโดยผู้ดูแลหลังยืนยัน `sub` ไม่แก้ให้เชื่อมด้วยอีเมลเองหรือใช้ `/install` ติดตั้งทับฐานข้อมูลเดิม
+
+**อายุการเข้าสู่ระบบ:** รองรับ OpenAPI 1.5.0 โดยขอ `request_refresh_token: true` ตอนแลก authorization code เฉพาะเจ้าหน้าที่ ให้ล็อกอินต่อเนื่องได้ **สูงสุด 8 ชั่วโมงนับจากการเข้าใช้ครั้งนั้น** หรือจน refresh token/MFA session/API key ของ CUSA หมดอายุ หากสั้นกว่า ไม่มีการยืดเป็น 8 ชั่วโมงใหม่ทุกครั้งที่ใช้งาน
+
+ไม่ต้องเพิ่มตัวแปรอายุ session ใน `.env` ใช้ `CUSA_API_KEY` ชุดเดิมที่ออก refresh token คีย์ต้องมี `identity:read` สำหรับแลก/ต่ออายุ, `token:introspect` สำหรับตรวจสิทธิ์ และ `token:revoke` สำหรับออกจากระบบ หากเปลี่ยนคีย์ เจ้าหน้าที่ต้องเข้าสู่ SSO ใหม่
+
+Access token ยังมีอายุไม่เกิน 300 วินาที เมื่อมีคำขอใช้งานและเหลือไม่เกิน 30 วินาที ระบบจะต่ออายุฝั่งเซิร์ฟเวอร์ผ่าน `/api/sso/token` ด้วย `grant_type: refresh_token` เก็บ access/refresh token แบบเข้ารหัส และแทนที่ทั้งคู่ใน transaction เดียว ไม่มี token ของ CUSA ส่งไป browser, cookie หรือ localStorage
+
+ระบบล็อกการหมุน token ผ่านฐานข้อมูลเพื่อรองรับหลายแท็บ/หลาย Node process และบันทึกสถานะก่อนเรียก CUSA ถ้าคำขอ timeout, provider ตอบผิดพลาด, บันทึกผลไม่ได้ หรือเซิร์ฟเวอร์หยุดระหว่างหมุน token จะให้เข้าสู่ระบบใหม่ **ไม่ใช้ refresh token เดิมลองซ้ำ** เพราะอาจทำให้ CUSA ถอน token ทั้งชุด การรอการหมุนที่ค้างไม่ทำให้ token เดิมกลับมาใช้ได้
+
+ทุก protected API ยังตรวจ `/api/sso/introspect` แบบไม่มี identity cache ตรวจ `active/aud/exp/sub/roles/scope` ก่อนให้ทำงาน หาก CUSA ตรวจสิทธิ์ไม่ได้จะไม่อนุญาตให้ดำเนินการ การต่ออายุไม่เพิ่ม scope หรือหลีกเลี่ยงการถอนสิทธิ์
+
+เมื่อออกจากระบบ Member Desk จะลบเซสชันท้องถิ่น ล้าง cookie และขอ CUSA ถอน token ของ service นี้ หาก CUSA ไม่ตอบรับ หน้าจอจะแจ้งว่าถอนฝั่ง CUSA ไม่สำเร็จ แต่เซสชัน Member Desk ถูกปิดแล้ว
+
+**อัปเดตระบบเดิม:** Deploy/build และ Restart App ตามปกติ ระบบเพิ่มตาราง `staff_sso_refresh` โดยไม่แก้หรือลบข้อมูลเคส ไม่ต้องเปิด `/install` ใหม่ เซสชันเก่าจะมีอายุเท่าเดิมจนเข้าสู่ SSO ใหม่แล้วได้รับ refresh token หาก CUSA ตอบเฉพาะ access token ระบบจะใช้เซสชันสั้นตามอายุ access token ไม่อ้างว่าต่ออายุได้
+
+**Shared Hosting:** ต่ออายุเมื่อมีคำขอ จึงไม่ต้องใช้ Scheduled Task ถ้าแอปพักแล้วกลับมาภายในอายุ refresh token จะต่ออายุและตรวจสิทธิ์ก่อนทำงาน หากหมดอายุ/ถูกถอนจะให้ยืนยันตัวตนในแท็บใหม่ ข้อความร่างอยู่ในหน้าเดิมได้ระหว่างยืนยัน ห้ามปิดหรือ reload หน้าเดิมก่อนส่ง
 
 ## 10. อายุข้อมูล
 
@@ -306,13 +357,17 @@ URL `/login?auth=success&status=mfa_required` ที่เห็นในเบ�
 | ผูกสมาชิก | LINE Login Channel ID, LIFF ID, CUSA 3 ตัว | เปิด LIFF → ยืนยัน CUSA → กลับเว็บสำเร็จ |
 | เมนูและนโยบาย | Rich Menu IDs, retention | เมนูตรงสถานะและอายุข้อมูลตรงนโยบาย |
 
-ค่าจาก Plesk ที่ติดตั้งใหม่อาจมี `APP_MODE=live`, `NODE_ENV=production`, `HOST`, `PORT`, `DATA_DIR`, key และรหัส admin อยู่แล้ว ให้ตรวจแล้วเติมส่วนที่ว่าง ไม่ต้องสร้าง key ใหม่
+ค่าจาก Plesk ที่ติดตั้งใหม่อาจมี `APP_MODE=live`, `NODE_ENV=production`, `HOST`, `PORT`, `DATA_DIR`, encryption key อยู่แล้ว ให้ตรวจแล้วเติมส่วนที่ว่าง ไม่ต้องสร้าง key ใหม่
 
 ## 12. ตรวจปัญหาที่พบบ่อย
 
 | อาการ | ตรวจอะไร |
 | --- | --- |
 | installer ไม่ผ่าน Node version | เลือก Node 22.12+ ใน Plesk; Node ที่ Terminal ใช้อาจคนละตัว |
+| `/install` แจ้งว่าติดตั้งแล้ว | ระบบมีค่าพร้อมใช้หรือผ่านการติดตั้งแล้ว ใช้ `.env` สำหรับแก้ค่าและ `install:plesk` สำหรับอัปเดต |
+| หน้าติดตั้งปฏิเสธฐานข้อมูล | ต้องใช้ DB เปล่า หรือการติดตั้งค้างของ installer นี้ด้วยค่าชุดเดิม |
+| ไม่เห็นหน้าติดตั้งหลังอัปโหลด | รัน `install:web` ให้ build ผ่านก่อน เลือก startup `app.cjs` แล้ว Restart App |
+| ติดตั้งแล้วแต่ยังเห็นหน้าเดิม | Restart App ใน Plesk เพื่อโหลด `.env` ใหม่ ขั้นตอนเว็บไม่สั่ง restart โฮสต์ให้ |
 | DB access denied | ชื่อ user/รหัส, prefix ของ Plesk, host ที่อนุญาต และ percent-encoding |
 | ไม่พบฐานข้อมูล | สร้าง DB ใน Plesk ก่อน ใช้ชื่อเต็มใน URL |
 | รุ่น MySQL/MariaDB ไม่ผ่าน | ดู `SELECT VERSION();` แล้วขอรุ่นที่รองรับจากโฮสต์ |

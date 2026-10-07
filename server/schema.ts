@@ -213,4 +213,24 @@ ALTER TABLE notifications ADD COLUMN IF NOT EXISTS line_payload TEXT;
 ALTER TABLE notifications ADD COLUMN IF NOT EXISTS line_sent_at TIMESTAMPTZ;
 ALTER TABLE notifications ADD COLUMN IF NOT EXISTS line_error TEXT;
 INSERT INTO schema_migrations(version) VALUES(5) ON CONFLICT DO NOTHING;
+CREATE TABLE IF NOT EXISTS staff_identities (
+  cusa_sub UUID PRIMARY KEY, application_id UUID NOT NULL,
+  agent_id UUID NOT NULL UNIQUE REFERENCES agents(id), created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS staff_sso_sessions (
+  token_hash TEXT PRIMARY KEY REFERENCES auth_sessions(token_hash) ON DELETE CASCADE,
+  cusa_sub UUID NOT NULL REFERENCES staff_identities(cusa_sub), encrypted_token TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS staff_sso_transactions (
+  state_hash TEXT PRIMARY KEY, browser_hash TEXT NOT NULL, verifier TEXT NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+INSERT INTO schema_migrations(version) VALUES(6) ON CONFLICT DO NOTHING;
+CREATE TABLE IF NOT EXISTS staff_sso_refresh (
+  token_hash TEXT PRIMARY KEY REFERENCES auth_sessions(token_hash) ON DELETE CASCADE,
+  encrypted_refresh_token TEXT NOT NULL, access_expires_at TIMESTAMPTZ NOT NULL,
+  refresh_expires_at TIMESTAMPTZ NOT NULL, api_key_hash TEXT NOT NULL, scopes TEXT NOT NULL,
+  rotation_id UUID, rotation_started_at TIMESTAMPTZ
+);
+INSERT INTO schema_migrations(version) VALUES(7) ON CONFLICT DO NOTHING;
 `;

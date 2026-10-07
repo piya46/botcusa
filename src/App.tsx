@@ -31,6 +31,7 @@ import { KnowledgePage, MembersPage, BroadcastPage, SettingsPage } from './pages
 import { Connect } from './pages/Connect';
 import { TicketsPage, TicketNotifications } from './pages/Tickets';
 import { InsightsPage } from './pages/Insights';
+import { Install } from './pages/Install';
 
 const navigation = [
   { path: 'overview', title: 'ภาพรวม', en: 'Overview', icon: LayoutDashboard },
@@ -54,7 +55,14 @@ export default function App() {
     [loading, setLoading] = useState(true),
     [mobile, setMobile] = useState(false),
     [help, setHelp] = useState(false),
+    [expired, setExpired] = useState(false),
+    [logoutWarning, setLogoutWarning] = useState(''),
     [search, setSearch] = useState('');
+  useEffect(() => {
+    const expire = () => setExpired(true);
+    addEventListener('session-expired', expire);
+    return () => removeEventListener('session-expired', expire);
+  }, []);
   const searchInput = useRef<HTMLInputElement>(null);
   useEffect(() => {
     const shortcut = (e: KeyboardEvent) => {
@@ -77,6 +85,10 @@ export default function App() {
   }, []);
   useEffect(() => {
     let active = true;
+    if (location.pathname === '/install' || new URLSearchParams(location.search).has('reauth')) {
+      setLoading(false);
+      return;
+    }
     (async () => {
       try {
         const s = await api<Session>('/auth/me');
@@ -94,6 +106,7 @@ export default function App() {
       active = false;
     };
   }, []);
+  if (path === '/install') return <Install />;
   if (path.startsWith('/connect'))
     return (
       <>
@@ -111,15 +124,25 @@ export default function App() {
   if (!session)
     return (
       <>
-        <Login onLogin={setSession} />
+        <Login warning={logoutWarning} />
         <Toasts />
       </>
     );
   const current = path.split('/')[2] || 'overview',
     item = navigation.find((n) => n.path === current);
   const logout = async () => {
-    await post('/auth/logout');
-    setSession(null);
+    try {
+      const result = await post<{ ssoRevoked?: boolean }>('/auth/logout');
+      setLogoutWarning(
+        result.ssoRevoked === false
+          ? 'ออกจาก Member Desk แล้ว แต่ CUSA ยังยืนยันการถอนเซสชันไม่ได้'
+          : '',
+      );
+      setExpired(false);
+      setSession(null);
+    } catch (error) {
+      notify((error as Error).message, 'error');
+    }
   };
   const switchAgent = async (id: string) => {
     try {
@@ -290,6 +313,41 @@ export default function App() {
           )}
         </main>
       </div>
+      {expired && (
+        <Modal
+          title="ยืนยันตัวตนเพื่อทำงานต่อ"
+          subtitle="งานที่กำลังพิมพ์ยังอยู่ในหน้านี้"
+          onClose={() => {}}
+        >
+          <p>
+            CUSA SSO หมดอายุหรือสิทธิ์เปลี่ยน เปิดแท็บใหม่เพื่อเข้าสู่ระบบ แล้วกลับมาตรวจสอบที่นี่
+          </p>
+          <div className="modal-footer">
+            <a className="button secondary" href="/admin?reauth=1" target="_blank" rel="noopener">
+              เปิด CUSA SSO
+            </a>
+            <button
+              className="button primary"
+              onClick={async () => {
+                try {
+                  const next = await api<Session>('/auth/me');
+                  if (next.agent.id !== session.agent.id) {
+                    location.reload();
+                    return;
+                  }
+                  setSession(next);
+                  setExpired(false);
+                  notify('ยืนยันตัวตนแล้ว ทำงานต่อได้');
+                } catch {
+                  notify('ยังยืนยันตัวตนไม่สำเร็จ กรุณาเข้าสู่ระบบในแท็บใหม่', 'error');
+                }
+              }}
+            >
+              ยืนยันตัวตนแล้ว
+            </button>
+          </div>
+        </Modal>
+      )}
       {help && (
         <Modal
           title="ดูแลสมาชิก ตั้งแต่ต้นจนจบ"
@@ -343,11 +401,16 @@ function Brand() {
     </div>
   );
 }
-function Login({ onLogin }: { onLogin: (s: Session) => void }) {
-  const [email, setEmail] = useState(''),
-    [password, setPassword] = useState(''),
-    [busy, setBusy] = useState(false),
-    [error, setError] = useState('');
+function Login({ warning }: { warning?: string }) {
+  const [busy, setBusy] = useState(false),
+    [error, setError] = useState(() => {
+      const reason = new URLSearchParams(location.search).get('auth');
+      return reason === 'conflict'
+        ? 'บัญชีอีเมลนี้มีอยู่แล้ว ติดต่อผู้ดูแลเพื่อย้ายบัญชีเดิม'
+        : reason
+          ? 'เข้าสู่ระบบไม่สำเร็จ ตรวจบทบาทของแอปกับผู้ดูแล CUSA แล้วลองใหม่'
+          : '';
+    });
   return (
     <div className="login-page">
       <div className="login-story">
@@ -373,13 +436,19 @@ function Login({ onLogin }: { onLogin: (s: Session) => void }) {
         </div>
         <h2>ยินดีต้อนรับกลับ</h2>
         <p>เข้าสู่ระบบสำหรับเจ้าหน้าที่ Member Desk</p>
+        {warning && (
+          <p role="status" className="form-error">
+            {warning}
+          </p>
+        )}
         <form
           onSubmit={async (e) => {
             e.preventDefault();
             setBusy(true);
             setError('');
             try {
-              onLogin(await post('/auth/login', { email, password }));
+              const result = await post<{ url: string }>('/auth/sso/start');
+              location.assign(result.url);
             } catch (e) {
               setError((e as Error).message);
             } finally {
@@ -387,35 +456,14 @@ function Login({ onLogin }: { onLogin: (s: Session) => void }) {
             }
           }}
         >
-          <label>
-            อีเมล
-            <input
-              type="email"
-              autoComplete="username"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="name@organization.org"
-            />
-          </label>
-          <label>
-            รหัสผ่าน
-            <input
-              type="password"
-              autoComplete="current-password"
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
-          </label>
           {error && <p className="form-error">{error}</p>}
           <button className="button primary" disabled={busy}>
-            {busy ? 'กำลังเข้าสู่ระบบ…' : 'เข้าสู่ระบบ'}
+            {busy ? 'กำลังไป CUSA SSO…' : 'เข้าสู่ระบบด้วย CUSA SSO'}
             <ArrowRight size={18} />
           </button>
         </form>
         <p className="login-note">
-          บัญชีเจ้าหน้าที่ออกโดยผู้ดูแลระบบ
+          ใช้บัญชี CUSA ที่มีบทบาทของ Member Desk
           <br />
           สมาชิกยืนยันตัวตนผ่านเมนู LINE ของสมาคม
         </p>

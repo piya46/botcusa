@@ -41,16 +41,30 @@ export function validateHostingEnvironment(env, nodeVersion = process.versions.n
     problems.push('WORKER_MODE ต้องเป็น opportunistic หรือ continuous');
   if (Buffer.from(env.DATA_ENCRYPTION_KEY ?? '', 'base64').length !== 32)
     problems.push('DATA_ENCRYPTION_KEY ต้องเป็น base64 ของ 32 bytes');
-  if ((env.ADMIN_PASSWORD ?? '').length < 12)
-    problems.push('ADMIN_PASSWORD ต้องยาวอย่างน้อย 12 ตัว');
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(env.ADMIN_EMAIL ?? '')) problems.push('ระบุ ADMIN_EMAIL');
+  try {
+    const u = new URL(env.CUSA_SSO_ORIGIN);
+    if (u.protocol !== 'https:' || u.origin !== env.CUSA_SSO_ORIGIN) throw new Error();
+  } catch {
+    problems.push('CUSA_SSO_ORIGIN ต้องเป็น HTTPS origin');
+  }
+  if (
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+      env.CUSA_CLIENT_ID ?? '',
+    )
+  )
+    problems.push('ระบุ CUSA_CLIENT_ID เป็น Application UUID');
+  if (!env.CUSA_API_KEY?.trim())
+    problems.push('ระบุ CUSA_API_KEY ที่มี identity:read, token:introspect และ token:revoke');
   return problems;
 }
 
 export function initializeHostingEnv(root) {
   const path = join(root, '.env');
   if (existsSync(path)) return false;
-  const template = `# Plesk shared hosting — private file, never place inside public/\nAPP_MODE=live\nNODE_ENV=production\nHOST=127.0.0.1\nPORT=3001\nAPP_ORIGIN=https://your-domain.invalid\nDATA_DIR=.data\nDATABASE_URL=\nMYSQL_SSL_CA=\nWORKER_MODE=opportunistic\nDATA_ENCRYPTION_KEY=${randomBytes(32).toString('base64')}\nADMIN_EMAIL=\nADMIN_PASSWORD=${randomBytes(24).toString('base64url')}\nLINE_CHANNEL_SECRET=\nLINE_CHANNEL_ACCESS_TOKEN=\nLINE_LOGIN_CHANNEL_ID=\nLIFF_ID=\nLINE_MEMBER_RICH_MENU_ID=\nLINE_GUEST_RICH_MENU_ID=\nLINE_AGENT_ALERT_USER_ID=\nLINE_SUPERVISOR_ALERT_USER_ID=\nLINE_LOADING_ENABLED=true\nLINE_LOADING_SECONDS=30\nGEMINI_API_KEY=\nGEMINI_MODEL=\nGEMINI_EMBEDDING_MODEL=\nAI_ANALYTICS_ENABLED=false\nCUSA_SSO_ORIGIN=https://sso.reunion.scicu-alumni.com\nCUSA_CLIENT_ID=\nCUSA_API_KEY=\nCHAT_RETENTION_DAYS=180\nDATASET_RETENTION_DAYS=180\n`;
+  const existingKey = join(root, '.data', 'encryption.key');
+  const key = existsSync(existingKey) ? readFileSync(existingKey) : randomBytes(32);
+  if (key.length !== 32) throw new Error('Encryption key เดิมไม่ถูกต้อง ไม่สร้าง key ทับ');
+  const template = `# Plesk shared hosting — private file, never place inside public/\n# Complete setup at /install; see docs/ENVIRONMENT.md\nAPP_MODE=live\nNODE_ENV=production\nHOST=127.0.0.1\nPORT=3001\nAPP_ORIGIN=https://your-domain.invalid\nDATA_DIR=.data\nDATABASE_URL=\nMYSQL_SSL_CA=\nWORKER_MODE=opportunistic\nDATA_ENCRYPTION_KEY=${key.toString('base64')}\nLINE_CHANNEL_SECRET=\nLINE_CHANNEL_ACCESS_TOKEN=\nLINE_LOGIN_CHANNEL_ID=\nLIFF_ID=\nLINE_MEMBER_RICH_MENU_ID=\nLINE_GUEST_RICH_MENU_ID=\nLINE_AGENT_ALERT_USER_ID=\nLINE_SUPERVISOR_ALERT_USER_ID=\nLINE_LOADING_ENABLED=true\nLINE_LOADING_SECONDS=30\nGEMINI_API_KEY=\nGEMINI_MODEL=\nGEMINI_EMBEDDING_MODEL=\nAI_ANALYTICS_ENABLED=false\nCUSA_SSO_ORIGIN=https://sso.reunion.scicu-alumni.com\nCUSA_CLIENT_ID=\nCUSA_API_KEY=\nCHAT_RETENTION_DAYS=180\nDATASET_RETENTION_DAYS=180\n`;
   writeFileSync(path, template, { mode: 0o600, flag: 'wx' });
   return true;
 }
@@ -60,25 +74,33 @@ async function main() {
   process.chdir(root);
   if (process.argv.includes('--help')) {
     console.log(
-      'node install.mjs [--init | --check | --skip-build]\nFirst run creates a private .env. Fill APP_ORIGIN, DATABASE_URL and ADMIN_EMAIL, then run again.\nPlesk: Application Root=this directory, Document Root=public, Startup File=app.cjs.\nMySQL/MariaDB shared hosting: WORKER_MODE=opportunistic, no local cron required. See docs/PLESK-INSTALL.md and docs/ENVIRONMENT.md.',
+      'node install.mjs [--web | --init | --check | --skip-build]\n--web builds the setup screen; restart Plesk and open /install.\nFirst run creates a private .env. Manual setup: fill APP_ORIGIN, DATABASE_URL and CUSA SSO settings, then run again.\nPlesk: Application Root=this directory, Document Root=public, Startup File=app.cjs.\nMySQL/MariaDB shared hosting: WORKER_MODE=opportunistic, no local cron required. See docs/PLESK-INSTALL.md and docs/ENVIRONMENT.md.',
     );
     return;
   }
   const created = initializeHostingEnv(root);
-  if (created || process.argv.includes('--init')) {
+  const web = process.argv.includes('--web');
+  if ((created || process.argv.includes('--init')) && !web) {
     console.log(
       created
-        ? 'สร้าง .env แล้ว (สิทธิ์ 600) พร้อม encryption key และรหัส admin แบบสุ่ม'
+        ? 'สร้าง .env แล้ว (สิทธิ์ 600) พร้อม encryption key'
         : 'มี .env อยู่แล้ว ไม่เขียนทับ',
     );
     console.log(
-      'แก้ APP_ORIGIN, DATABASE_URL และ ADMIN_EMAIL ใน Plesk File Manager แล้วรัน installer อีกครั้ง รหัส admin อยู่ในไฟล์ .env',
+      'แก้ APP_ORIGIN, DATABASE_URL และ CUSA SSO ใน Plesk File Manager แล้วรัน installer อีกครั้ง',
     );
     return;
   }
   const env = { ...parseEnv(readFileSync(join(root, '.env'), 'utf8')), ...process.env };
+  if (
+    web &&
+    (existsSync(join(root, '.setup', 'completed')) ||
+      (validateHostingEnvironment(env).length === 0 &&
+        !existsSync(join(root, '.setup', 'pending.json'))))
+  )
+    throw new Error('ระบบมีค่าติดตั้งแล้ว ไม่เปิด /install ซ้ำ ใช้ install:plesk สำหรับอัปเดต');
   const problems = validateHostingEnvironment(env);
-  if (problems.length) throw new Error(problems.join('\n'));
+  if (!web && problems.length) throw new Error(problems.join('\n'));
   chmodSync(join(root, '.env'), 0o600);
   if (process.argv.includes('--check')) {
     console.log('ผ่านการตรวจ Node.js และรูปแบบการตั้งค่า (ยังไม่ทดสอบฐานข้อมูล)');
@@ -105,6 +127,15 @@ async function main() {
     !existsSync(join(root, 'dist-server/server/index.js'))
   )
     throw new Error('ไม่พบไฟล์ build; รัน npm run build ก่อน');
+  if (web) {
+    const { prepareWebInstall } = await import('./dist-server/server/install.js');
+    prepareWebInstall(root);
+    console.log('เตรียมหน้าติดตั้งแล้ว: Restart App แล้วเปิด https://โดเมนของคุณ/install');
+    console.log(
+      'เปิดไฟล์ .setup/access.key ใน Plesk File Manager เพื่อคัดลอกรหัสติดตั้ง ห้ามวาง .setup ใน public',
+    );
+    return;
+  }
   // Bootstrap is explicit; never bind HTTP, send LINE or start the worker during installation.
   Object.assign(process.env, env);
   const { getConfig } = await import('./dist-server/server/config.js');

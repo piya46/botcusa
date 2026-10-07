@@ -1,6 +1,6 @@
 # ติดตั้งบน Hostatom / Plesk Shared Hosting
 
-สำหรับแพ็กเกจ **Node.js + MySQL/MariaDB ที่ไม่มี PostgreSQL และ Scheduled Tasks** ใช้ `install.mjs` ผ่านเมนู **Run Script** ได้ ไม่ต้องใช้ root, Docker หรือ pgvector
+สำหรับแพ็กเกจ **Node.js + MySQL/MariaDB ที่ไม่มี PostgreSQL และ Scheduled Tasks** มีหน้าติดตั้ง **`/install`** เตรียมด้วยเมนู **Run Script → install:web** ไม่ต้องใช้ root, Docker หรือ pgvector
 
 ที่มาของค่าและขั้นตอนกรอกทุกตัวอยู่ใน [คู่มือ .env แบบละเอียด](ENVIRONMENT.md)
 
@@ -27,28 +27,45 @@ cusa/                 Application Root
   public/             Document Root — ห้ามตั้งเป็นโฟลเดอร์ cusa ทั้งก้อน
   .env                ค่าจริงและ secrets สร้างบนเซิร์ฟเวอร์
   .data/              ไฟล์เข้ารหัส อยู่นอก Document Root
+  .setup/             รหัสติดตั้งและสถานะการติดตั้ง อยู่นอก Document Root
 ```
 
 ตั้ง **Document Root = cusa/public** และ **Application Root = cusa** ตั้งแต่แรก เพื่อไม่ให้เว็บเซิร์ฟเวอร์เสิร์ฟ `.env`, ฐานข้อมูล หรือซอร์สโค้ดเป็นไฟล์สาธารณะ หน้าเว็บจาก `dist` จะให้บริการผ่านแอป Fastify
 
-## 2. สร้างฐานข้อมูลและการตั้งค่า
+## 2. ติดตั้งผ่านหน้าจอ (แนะนำ)
+
+1. สร้างฐานข้อมูลเปล่าและ database user ใน **Plesk → Databases** จด host/port, ชื่อเต็มรวม prefix และรหัสผ่าน
+2. ไป **Node.js** เลือก Node 22.12+ ตั้ง Startup File เป็น **app.cjs**
+3. รัน **Run Script → install:web** ตัวติดตั้งเตรียม `.env` ส่วนพื้นฐาน ลง dependencies และ build เว็บให้ก่อน ยังไม่เชื่อมฐานข้อมูลหรือส่งข้อความ LINE
+4. **Restart App** แล้วเข้า **`https://โดเมนของคุณ/install`**
+5. เปิดไฟล์ **`.setup/access.key`** จาก File Manager แล้วกรอกรหัสในหน้าเว็บ ถ้าไม่เห็นโฟลเดอร์ ให้เปิดแสดงไฟล์ซ่อน
+6. กรอกโดเมนและข้อมูล CUSA SSO → ฐานข้อมูล → บริการเสริม → กดติดตั้ง
+7. เมื่อสำเร็จ **Restart App** อีกครั้ง แล้วเข้าหน้า `/admin/overview` ด้วย CUSA SSO ที่มีบทบาท `admin` ของแอปนี้
+
+ระบบประกอบ `DATABASE_URL` ให้เองเมื่อกรอกส่วนต่าง ๆ ผ่านหน้าจอ จึงไม่ต้อง URL-encode password ด้วยมือ การตั้ง LINE/Gemini ข้ามแล้วเติมภายหลังได้ ส่วน CUSA SSO ต้องพร้อมสำหรับเจ้าหน้าที่ `/install` จะปิดเมื่อระบบติดตั้งแล้วและไม่ใช้สำหรับรีเซ็ตรหัสหรือเปลี่ยนฐานข้อมูลของระบบเดิม
+
+ถ้า build เกิน RAM ของโฮสต์ ให้ build บนเครื่องก่อนและอัปโหลด `dist` กับ `dist-server` แล้วรัน `install:web` พร้อม argument `--skip-build` โฮสต์ยังต้องลง dependencies เพื่อรันแอป
+
+## ทางเลือก: ตั้งผ่านไฟล์และคำสั่ง
 
 ไป **Databases → Add Database** ใน Plesk สร้างฐานข้อมูลเปล่าและผู้ใช้เฉพาะแอปนี้ จดชื่อฐานข้อมูลและผู้ใช้แบบเต็มที่รวม prefix ของ subscription พร้อม host/port และรหัสผ่าน ตัวติดตั้งสร้างตารางให้ แต่ไม่สร้างฐานข้อมูลหรือบัญชี Plesk
 
 ที่ **Websites & Domains → Node.js** เลือก Node.js 22.12+ แล้วใช้ **Run Script → install:plesk**
 
-ครั้งแรกจะสร้าง `.env` สิทธิ์ 600 พร้อม encryption key และรหัส admin แบบสุ่ม โดยไม่แสดง secrets ใน log เปิดไฟล์ด้วย Plesk File Manager แล้วเติม:
+ครั้งแรกจะสร้าง `.env` สิทธิ์ 600 พร้อม encryption key โดยไม่แสดง secrets ใน log เปิดไฟล์ด้วย Plesk File Manager แล้วเติม:
 
 ```dotenv
 APP_ORIGIN=https://bot.your-domain.com
 DATABASE_URL="mysql://DB_USER:URL_ENCODED_PASSWORD@DB_HOST:3306/DB_NAME"
 WORKER_MODE=opportunistic
-ADMIN_EMAIL=admin@your-domain.com
+CUSA_SSO_ORIGIN=https://sso.reunion.scicu-alumni.com
+CUSA_CLIENT_ID=APPLICATION_UUID_FROM_CUSA
+CUSA_API_KEY=BACKEND_API_KEY_FROM_CUSA
 ```
 
 ใช้ host/port ที่ Plesk แจ้ง ไม่เดาว่าเป็น localhost เสมอ และ percent-encode รหัสผ่านใน URL หากมีอักขระพิเศษ ดูตัวอย่างใน [คู่มือ .env](ENVIRONMENT.md) ถ้าฐานข้อมูลใช้ TLS ให้เพิ่ม `?ssl=true` และตั้ง `MYSQL_SSL_CA` เมื่อมี CA เฉพาะ
 
-เก็บ `DATA_ENCRYPTION_KEY` ไว้ชุดเดิมตลอด รหัสเข้าเว็บครั้งแรกคือ `ADMIN_PASSWORD` ในไฟล์นี้ การรันติดตั้งซ้ำไม่เปลี่ยนรหัสของบัญชี admin ที่มีอยู่แล้ว
+เก็บ `DATA_ENCRYPTION_KEY` ไว้ชุดเดิมตลอด เจ้าหน้าที่ใช้ CUSA SSO เท่านั้น ให้ CUSA ลงทะเบียน callback `/api/auth/sso/callback` และสร้างบทบาท `admin`, `agent`, `reviewer` ของ application นี้ API key ต้องมี `identity:read`, `token:introspect` และ `token:revoke` ไม่ต้องตั้งรหัสผู้ดูแลในแอป ดูตารางสิทธิ์ใน [คู่มือ .env](ENVIRONMENT.md#9-cusa-sso--ขอจากผู้ดูแลระบบ-cusa)
 
 ถ้ามี SSH ใช้คำสั่งแทนได้:
 
@@ -58,9 +75,9 @@ sh install.sh --init
 sh install.sh
 ```
 
-## 3. ติดตั้งและเริ่มแอป
+### ติดตั้งและเริ่มแอปด้วยไฟล์
 
-รัน **install:plesk** อีกครั้ง ตัวติดตั้งจะตรวจค่า → `npm ci --include=dev` → build → ตรวจรุ่น/เชื่อมต่อ MySQL/MariaDB → สร้างตารางและบัญชี admin การติดตั้งไม่เริ่ม worker และไม่ส่ง LINE
+รัน **install:plesk** อีกครั้ง ตัวติดตั้งจะตรวจค่า → `npm ci --include=dev` → build → ตรวจรุ่น/เชื่อมต่อ MySQL/MariaDB → สร้างตารางและการตั้งค่าเริ่มต้น การติดตั้งไม่เริ่ม worker และไม่ส่ง LINE
 
 ตั้งค่าใน Plesk:
 
@@ -75,7 +92,7 @@ sh install.sh
 
 ถ้าโฮสต์จำกัด RAM จน build ไม่ผ่าน ให้ build บนเครื่องที่รองรับก่อน แล้วอัปโหลด `dist` และ `dist-server` ด้วย จากนั้นรัน **install:plesk** พร้อม argument `--skip-build` ตัวติดตั้งยังลง dependencies และตรวจฐานข้อมูล
 
-## 4. งานเบื้องหลังโดยไม่ใช้ Scheduled Tasks
+## 3. งานเบื้องหลังโดยไม่ใช้ Scheduled Tasks
 
 ตั้ง `WORKER_MODE=opportunistic` สำหรับโฮสต์นี้:
 
@@ -88,7 +105,7 @@ sh install.sh
 
 ถ้าต้องส่งตามเวลาแม้ไม่มี request เลย ต้องมีตัวเรียก HTTPS ภายนอกหรือพื้นที่รัน worker ต่อเนื่องเพิ่มเติม รุ่นนี้ไม่ได้สมัครหรือเปิดบริการภายนอกให้ และไม่รับประกัน SLA บน shared hosting
 
-## 5. เชื่อมบริการ
+## 4. เชื่อมบริการ
 
 เติม LINE/Gemini/CUSA ใน `.env` แล้ว **Restart App**:
 

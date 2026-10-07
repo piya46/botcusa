@@ -31,6 +31,8 @@ import {
   sendAgentMessage,
 } from './conversations.js';
 import { createDataset, createExample, reviewExample, assertTrainingEnabled } from './training.js';
+import { logoutStaff } from './staff-refresh.js';
+import { registerStaffSso, authenticateStaff } from './staff-sso.js';
 import { registerSso } from './sso.js';
 import { imageType, readFileContent, storeFile, deleteFile, verifyMedia } from './media.js';
 import { lineRequest, type Fetcher } from './providers.js';
@@ -140,7 +142,11 @@ export async function buildApp(
     }
     const publicRoutes = [
       '/api/health',
+      '/api/install/status',
       '/api/auth/login',
+      '/api/auth/sso/start',
+      '/api/auth/sso/callback',
+      '/api/auth/logout',
       '/api/auth/demo',
       '/api/auth/callback',
       '/api/connect/config',
@@ -155,6 +161,15 @@ export async function buildApp(
       return;
     const session = request.cookies.cusa_session;
     if (!session) throw new AppError(401, 'กรุณาเข้าสู่ระบบ');
+    if (!config.demo) {
+      request.agent = await authenticateStaff(
+        db,
+        config,
+        tokenHash(session),
+        options.fetcher ?? fetch,
+      );
+      return;
+    }
     const [user] = await db.query<Agent>(
       `SELECT a.id,a.name,a.email,a.role FROM auth_sessions s JOIN agents a ON a.id=s.agent_id WHERE s.token_hash=$1 AND s.expires_at>now() AND a.active=true`,
       [tokenHash(session)],
@@ -179,11 +194,13 @@ export async function buildApp(
     return { agent, demo: config.demo };
   };
   app.get('/api/health', async () => ({ ok: true }));
+  app.get('/api/install/status', async () => ({ installed: true, restartRequired: false }));
   app.get('/api/runtime', async () => ({ workerMode: config.workerMode }));
   app.post(
     '/api/auth/login',
     { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } },
     async (request, reply) => {
+      if (!config.demo) throw new AppError(403, 'ใช้ CUSA SSO เพื่อเข้าสู่ระบบ');
       const body = z
         .object({ email: z.string().email().max(254), password: z.string().min(1).max(200) })
         .parse(request.body);
@@ -220,11 +237,12 @@ export async function buildApp(
     agents: config.demo ? DEMO_AGENTS : undefined,
   }));
   app.post('/api/auth/logout', async (request, reply) => {
-    await db.query(`DELETE FROM auth_sessions WHERE token_hash=$1`, [
-      tokenHash(request.cookies.cusa_session!),
-    ]);
+    const hash = tokenHash(request.cookies.cusa_session ?? '');
+    let ssoRevoked = true;
+    if (config.demo) await db.query('DELETE FROM auth_sessions WHERE token_hash=$1', [hash]);
+    else ssoRevoked = await logoutStaff(db, config, hash, options.fetcher ?? fetch);
     reply.clearCookie('cusa_session', { path: '/' });
-    return { ok: true };
+    return { ok: true, ssoRevoked };
   });
   app.get('/api/conversations', async (request) => {
     const q = z
@@ -874,6 +892,7 @@ export async function buildApp(
     );
   });
   app.post('/api/agents', async (request) => {
+    if (!config.demo) throw new AppError(403, 'กำหนดบทบาทเจ้าหน้าที่ผ่าน CUSA SSO');
     const a = admin(request),
       b = z
         .object({
@@ -949,6 +968,7 @@ export async function buildApp(
     return { ok: true };
   });
   registerSso(app, db, config, options.fetcher);
+  registerStaffSso(app, db, config, options.fetcher);
   if (options.serveStatic && existsSync(resolve('dist'))) {
     await app.register(staticFiles, { root: resolve('dist'), prefix: '/' });
     app.setNotFoundHandler((request, reply) =>

@@ -1,3 +1,4 @@
+import { requestCusaToken } from './sso-tokens.js';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import type { FastifyInstance } from 'fastify';
@@ -7,7 +8,7 @@ import { queueRichMenu } from './rich-menus.js';
 import { AppError, decrypt, encrypt, newToken, tokenHash } from './security.js';
 import type { Fetcher } from './providers.js';
 
-const profileSchema = z.object({
+export const profileSchema = z.object({
   sub: z.string().uuid(),
   aud: z.string().uuid(),
   roles: z.array(z.string()),
@@ -17,39 +18,28 @@ const profileSchema = z.object({
   email_verified: z.literal(true).optional(),
   department: z.string().optional(),
 });
-export async function exchangeCusa(
+export async function exchangeCusaGrant(
   config: Config,
   code: string,
   verifier: string,
   fetcher: Fetcher = fetch,
+  callbackPath = '/api/auth/callback',
+  requestRefreshToken = false,
 ) {
   const origin = new URL(config.ssoOrigin);
-  if (origin.protocol !== 'https:') throw new AppError(503, 'SSO ต้องใช้ HTTPS');
-  // CUSA v1.4.0: JSON request, no client_id in token body; opaque access token, no refresh flow.
-  const response = await fetcher(new URL('/api/sso/token', origin), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-API-Key': config.ssoApiKey },
-    signal: AbortSignal.timeout(10_000),
-    body: JSON.stringify({
+  const token = await requestCusaToken(
+    config,
+    {
       grant_type: 'authorization_code',
       code,
-      redirect_uri: `${config.origin}/api/auth/callback`,
+      redirect_uri: `${config.origin}${callbackPath}`,
       code_verifier: verifier,
-    }),
-  });
-  if (!response.ok) throw new AppError(401, 'SSO ไม่สามารถแลกรหัสได้ กรุณาเริ่มยืนยันตัวตนใหม่');
-  const token = z
-    .object({
-      access_token: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
-      token_type: z.literal('Bearer'),
-      expires_in: z.number().int().positive().max(300),
-      scope: z.string(),
-    })
-    .parse(await response.json());
-  if (!token.scope.split(' ').includes('identity:read'))
-    throw new AppError(403, 'SSO ไม่ได้อนุมัติสิทธิ์ identity:read');
+      ...(requestRefreshToken ? { request_refresh_token: true } : {}),
+    },
+    fetcher,
+  );
   const identity = await fetcher(new URL('/api/sso/userinfo', origin), {
-    headers: { Authorization: `Bearer ${token.access_token}` },
+    headers: { Authorization: `Bearer ${token.accessToken}` },
     signal: AbortSignal.timeout(10_000),
   });
   if (!identity.ok) throw new AppError(401, 'อ่านข้อมูลยืนยันตัวตนไม่ได้ กรุณาเข้าสู่ระบบใหม่');
@@ -60,8 +50,19 @@ export async function exchangeCusa(
     profile.roles.length === 0
   )
     throw new AppError(403, 'บัญชีนี้ไม่มีสิทธิ์ของบริการ CUSA Member Desk');
-  // Tokens live only during this linking transaction. Linked identity is not an authorization session.
-  return profile;
+  return {
+    profile,
+    ...token,
+  };
+}
+export async function exchangeCusa(
+  config: Config,
+  code: string,
+  verifier: string,
+  fetcher: Fetcher = fetch,
+) {
+  // Member linking is not an authorization session; discard the provider token afterwards.
+  return (await exchangeCusaGrant(config, code, verifier, fetcher)).profile;
 }
 export function registerSso(
   app: FastifyInstance,
@@ -180,7 +181,7 @@ export function registerSso(
         if (config.memberMenuId) await queueRichMenu(tx, user.id, config.memberMenuId);
         await audit(tx, null, 'ACCOUNT_LINKED', 'user', user.id, {
           provider: 'CUSA',
-          contract: '1.4.0',
+          contract: '1.5.0',
         });
       });
       return reply.redirect('/connect?result=success');

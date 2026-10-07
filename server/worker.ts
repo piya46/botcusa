@@ -796,6 +796,7 @@ export class Worker {
     );
     await this.db.query(`DELETE FROM auth_sessions WHERE expires_at<now()`);
     await this.db.query(`DELETE FROM sso_transactions WHERE expires_at<now()`);
+    await this.db.query(`DELETE FROM staff_sso_transactions WHERE expires_at<now()`);
     await this.db.query(
       `UPDATE messages SET reply_token=NULL WHERE reply_received_at<now()-interval '20 minutes' AND reply_token IS NOT NULL`,
     );

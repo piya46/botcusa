@@ -182,7 +182,11 @@ const identifier = (name: string) => {
   return `\`${name}\``;
 };
 function primaryKey(table: string) {
-  return table === 'sso_transactions' ? 'state_hash' : table === 'settings' ? 'key' : 'id';
+  return ['sso_transactions', 'staff_sso_transactions'].includes(table)
+    ? 'state_hash'
+    : table === 'settings'
+      ? 'key'
+      : 'id';
 }
 
 export function mysqlConnectionOptions(databaseUrl: string, caFile?: string) {

@@ -353,3 +353,42 @@ mysqlSchema.push(
     time('requested_at', true),
   ]),
 );
+
+mysqlSchema.push(
+  table('staff_identities', [
+    'cusa_sub CHAR(36) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY',
+    'application_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL',
+    ref('agent_id', 'agents', true),
+    'UNIQUE(agent_id)',
+    created,
+  ]),
+  table('staff_sso_sessions', [
+    'token_hash VARCHAR(191) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY',
+    'FOREIGN KEY (token_hash) REFERENCES auth_sessions(token_hash) ON DELETE CASCADE',
+    'cusa_sub CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL',
+    'FOREIGN KEY (cusa_sub) REFERENCES staff_identities(cusa_sub)',
+    'encrypted_token TEXT NOT NULL',
+  ]),
+  table('staff_sso_transactions', [
+    'state_hash VARCHAR(191) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY',
+    'browser_hash VARCHAR(191) CHARACTER SET ascii COLLATE ascii_bin NOT NULL',
+    'verifier TEXT NOT NULL',
+    'expires_at DATETIME(3) NOT NULL',
+    created,
+  ]),
+);
+
+// Additive migration: existing staff sessions remain valid until their original expiry.
+mysqlSchema.push(
+  table('staff_sso_refresh', [
+    'token_hash VARCHAR(191) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY',
+    'FOREIGN KEY (token_hash) REFERENCES auth_sessions(token_hash) ON DELETE CASCADE',
+    'encrypted_refresh_token TEXT NOT NULL',
+    'access_expires_at DATETIME(3) NOT NULL',
+    'refresh_expires_at DATETIME(3) NOT NULL',
+    'api_key_hash VARCHAR(191) CHARACTER SET ascii COLLATE ascii_bin NOT NULL',
+    'scopes TEXT NOT NULL',
+    'rotation_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin',
+    'rotation_started_at DATETIME(3)',
+  ]),
+);

@@ -16,8 +16,11 @@ export async function api<T = any>(path: string, options?: RequestInit): Promise
     },
   });
   const data = await response.json();
-  if (!response.ok)
+  if (!response.ok) {
+    if (response.status === 401 && !path.startsWith('/auth/') && !path.startsWith('/connect/'))
+      window.dispatchEvent(new Event('session-expired'));
     throw new ApiError(response.status, data.error ?? 'เกิดข้อผิดพลาด กรุณาลองใหม่');
+  }
   return data as T;
 }
 export const post = <T = any>(path: string, body: unknown = {}) =>
