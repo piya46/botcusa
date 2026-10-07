@@ -13,6 +13,10 @@ npm run dev
 
 เปิด **http://localhost:5180** — API อยู่ที่ `http://127.0.0.1:3001`
 
+**Hostatom / Plesk Shared Hosting:** ใช้ `install.mjs` หรือเมนู Run Script `install:plesk` ดู [วิธีติดตั้ง](docs/PLESK-INSTALL.md) ใช้ Node.js 22.12+ และ MySQL 8.0.17+ / MariaDB 10.6+ ไม่ต้องมี PostgreSQL หรือ Scheduled Tasks บนโฮสต์ ตั้ง `WORKER_MODE=opportunistic` งานตั้งเวลาอาจล่าช้าช่วงแอปพัก
+
+**ตั้งค่าทีละตัว:** [คู่มือ .env พร้อมที่มาของทุกค่า](docs/ENVIRONMENT.md) ครอบคลุม Plesk, LINE, LIFF, Gemini และ CUSA SSO
+
 ค่าเริ่มต้นเป็น **demo** ใช้สมาชิกสมมติและจำลองการส่ง LINE ทุกครั้ง ข้อมูลเก็บจริงใน `.data/postgres` ด้วย embedded PostgreSQL (PGlite) และไฟล์แนบเข้ารหัสอยู่ใน `.data/attachments` ปิดและเปิดโปรแกรมใหม่แล้วข้อมูลยังอยู่ ห้ามเปิดโปรเซสสองตัวบนโฟลเดอร์ PGlite เดียวกัน
 
 พื้นที่ทดลองมีสามบัญชี สลับที่มุมซ้ายล่าง:
@@ -27,12 +31,14 @@ npm run dev
 - Inbox: ค้นหา/กรอง รับเคสแบบ atomic ตอบข้อความ ส่งภาพ PNG/JPEG ไม่เกิน 1 MB บันทึกภายใน ปิดเคสพร้อมผลการดูแล และดาวน์โหลด transcript JSON
 - Tickets: โอนเคสไปหน่วยงานและผู้รับผิดชอบ ระบุเหตุผล แจ้งเตือนผู้รับในระบบ รับงานต่อในเคสเดิม และเก็บเส้นทางการโอนพร้อมผู้รับงานแต่ละครั้ง
 - ข้อความเจ้าหน้าที่และงานส่งถูกบันทึกใน transaction เดียวกันก่อนเรียก LINE ข้อความและไฟล์แนบเข้ารหัส AES-256-GCM
-- LINE webhook ตรวจ HMAC จาก raw bytes บันทึกงานก่อนตอบ 200 กัน event ซ้ำ และประมวลผลผ่าน durable PostgreSQL queue
+- LINE webhook ตรวจ HMAC จาก raw bytes บันทึกงานก่อนตอบ 200 กัน event ซ้ำ และประมวลผลผ่าน durable database queue (MySQL/MariaDB หรือ PostgreSQL)
 - รับข้อความและชนิดข้อมูล LINE รวมทั้ง payload ของข้อความที่เข้ารหัส; ดาวน์โหลดไฟล์แนบจาก LINE ไม่เกิน 20 MB และให้เจ้าหน้าที่ที่ล็อกอินเข้าถึง
 - Reply เมื่อ token ยังใช้ได้; Push เมื่อไม่มี token ที่ใช้ได้ พร้อม retry key คงที่ การตอบ Reply ที่ไม่ทราบผลจะไม่ส่งซ้ำหรือเปลี่ยนไป Push อัตโนมัติ
 - หยุดบอทหลังส่งต่อหรือรับเคส; เมื่อเคสปิดแล้ว ข้อความใหม่เริ่มเคสใหม่กับบอท
-- AI ใช้ฉบับความรู้ที่อนุมัติแล้ว พร้อม keyword search ภาษาไทย และ pgvector เมื่อกำหนด embedding model หากไม่มีโมเดลใช้คำตอบทางการโดยตรง ถ้าข้อมูลไม่พอส่งต่อเจ้าหน้าที่
+- AI ใช้ฉบับความรู้ที่อนุมัติแล้ว พร้อม keyword search ภาษาไทย และค้นด้วย embedding เมื่อกำหนดโมเดล (MySQL เก็บ JSON และจัดอันดับในแอป; PostgreSQL ใช้ pgvector) หากไม่มีโมเดลใช้คำตอบทางการโดยตรง ถ้าข้อมูลไม่พอส่งต่อเจ้าหน้าที่
 - Knowledge Base: ฉบับร่าง, ผู้ตรวจทานอีกคน, ประวัติเวอร์ชัน, ฉบับเผยแพร่ที่แยกจากฉบับกำลังแก้ไข
+- อัปโหลดคู่มือ PDF/TXT เก็บต้นฉบับเข้ารหัส แยกเนื้อหาตามหน้าเป็นฉบับร่าง พร้อมเก็บถาวรเพื่อหยุดใช้ตอบ
+- Insights: รายการคำถามที่บอทไม่มีความรู้ เติมคำตอบเป็นร่าง และวิเคราะห์บทสนทนาหลังปิดเคส/ว่าง 30 นาทีเมื่อเปิดใช้ Gemini ใน live
 - Training Studio: เลือกคำตอบเจ้าหน้าที่ที่ส่งสำเร็จจากเคสแก้สำเร็จ รักษาบริบทข้อความ ปกปิดข้อมูลเบื้องต้น ตรวจ/แก้ไข อนุมัติโดยคนละคน และส่งออก JSONL
 - Dataset snapshots มีเวอร์ชันและที่มาของข้อมูล แบ่ง train/validation/test ด้วย hash ของ conversation เพื่อไม่ให้เคสเดียวกันข้ามชุด
 - รองรับ LINE unsend แม้ event ยกเลิกมาถึงก่อนข้อความต้นฉบับ ถอนเนื้อหา ไฟล์แนบ ตัวอย่าง และ snapshot ที่เกี่ยวข้อง
@@ -62,7 +68,17 @@ npm run dev
 5. ผู้รับที่ระบุจะเห็นแจ้งเตือนที่กระดิ่ง หากส่งเข้าคิวทีม สมาชิกทีมทุกคนจะได้รับแจ้งเตือนในระบบ เปิดเคสแล้วกด **รับเคสนี้** ก่อนตอบ ผู้รับผิดชอบเดิมที่เป็น AGENT ไม่มีสิทธิ์ตอบแทรก ผู้ดูแลระบบยังมีสิทธิ์จัดการเคสเพื่อช่วยแก้งานค้าง
 6. หน้า Tickets กรองหน่วยงาน สถานะ และ **งานของฉันและคิวทีม** ได้ ประวัติการโอนแสดงผู้ส่ง หน่วยงาน ผู้รับ เหตุผล และเวลารับงาน รวมอยู่ใน transcript ด้วย บริบทบทสนทนาจากเจ้าหน้าที่ทุกคนยังนำไปตรวจทานเป็นข้อมูลฝึกได้เมื่อปิดเคสสำเร็จ
 
-Demo มี **งานบริการสมาชิก / พิมพ์ชนก** และ **งานระบบและบัญชี CUSA / นลิน** ให้ลองโอนและสลับบัญชีได้ การแจ้งเตือนโอนเคสเป็นการแจ้งเตือนภายในเว็บ ยังไม่มีการส่งอีเมลหรือ LINE รายบุคคลของเจ้าหน้าที่
+Demo มี **งานบริการสมาชิก / พิมพ์ชนก** และ **งานระบบและบัญชี CUSA / นลิน** ให้ลองโอนและสลับบัญชีได้
+
+ตั้ง **LINE รายบุคคล** ได้ที่ **ตั้งค่าระบบ → LINE และการเชื่อมต่อ** ผู้ดูแลระบุ Messaging API User ID ของเจ้าหน้าที่ (`U` + hex 32 ตัว จาก OA/provider เดียวกัน) และเปิดรับแจ้งเตือน ผู้รับต้องเพิ่ม OA เป็นเพื่อน ถ้าส่งเข้าคิวทีมจะแจ้งสมาชิกทีมที่เปิดรับไว้ทุกคน ถ้าระบุคนจะแจ้งเฉพาะคนนั้น ใช้ Push API และโควตาของ OA ไม่ใช่ LINE Notify
+
+ระบบเก็บงานแจ้งใน transaction เดียวกับการโอน ใช้ข้อความ/ผู้รับเดิมและ retry key เดิมในการลองซ้ำ ยกเลิกเมื่อเคสถูกรับ โอนต่อ เปลี่ยนผู้รับ หรือคำแจ้งเก่ากว่า 23 ชั่วโมง ข้อความมีเลขเคสและลิงก์ที่ต้องล็อกอิน ไม่มีเนื้อหาแชตหรือเหตุผลการโอน ดูสถานะรายคนได้จากกระดิ่งและหน้าตั้งค่า สถานะ LINE รับคำขอไม่ได้ยืนยันว่าถึงเครื่องหรือถูกอ่าน Demo ไม่ส่งจริง และระบบยังไม่ส่งอีเมล
+
+### สถานะกำลังตอบใน LINE
+
+ก่อนบอทค้นความรู้/เรียก AI จะเรียก `/v2/bot/chat/loading/start` สำหรับข้อความส่วนตัวใหม่ ใช้เวลา 30 วินาที ปรับด้วย `LINE_LOADING_SECONDS` (5–60 เพิ่มทีละ 5) หรือปิดด้วย `LINE_LOADING_ENABLED=false` การเรียกล้มเหลวไม่ขวางคำตอบ และไม่มีการใช้ reply token สำหรับ loading ระบบไม่เรียกในเคสที่เจ้าหน้าที่ดูแล ข้อความขอคุยกับคน ข้อความเก่า หรือคำถามที่ตอบไปแล้ว
+
+LINE แสดงภาพ loading เฉพาะผู้ใช้ที่เปิดแชตส่วนตัวกับ OA และซ่อนเมื่อ OA ส่งข้อความหรือครบเวลา ไม่ใช่ push notification ดู [LINE Loading API](https://developers.line.biz/en/docs/messaging-api/use-loading-indicator/)
 
 ### กลุ่มข่าวสารและ Rich Menu
 
@@ -70,14 +86,32 @@ Demo มี **งานบริการสมาชิก / พิมพ์ช
 
 หน้า **สมาชิก → จัดการสมาชิก** เลือก Rich Menu จากบัญชี LINE ที่เชื่อมต่อ หรือปลดเพื่อกลับไปใช้เมนูเริ่มต้นของ OA ได้ การเปลี่ยนเมนูไม่ให้สิทธิ์ CUSA เพิ่มและไม่เปลี่ยนตัวตนสมาชิก สถานะ “LINE รับคำสั่งแล้ว” แสดงผลรับ API เท่านั้น ไม่ยืนยันว่าเมนูปรากฏบนเครื่องสมาชิก; เงื่อนไขการแสดงเป็นไปตาม [LINE Rich Menu API](https://developers.line.biz/en/reference/messaging-api/nojs/#link-rich-menu-to-user)
 
+### คู่มือและคำถามรอเติมความรู้
+
+เปิด **ฐานความรู้ → อัปโหลดคู่มือ** รองรับ PDF ที่มีชั้นข้อความและ TXT แบบ UTF-8 ขนาดไม่เกิน 8 MB, PDF 60 หน้า, ข้อความ 200,000 ตัวอักษร และไม่เกิน 100 ส่วน ส่วนละไม่เกิน 3,000 ตัวอักษร ระบบอ่าน PDF ใน worker thread แยก จำกัดเวลา 20 วินาทีและ JS heap 96 MB โดยใช้ [unpdf](https://github.com/unjs/unpdf) และอ่านทีละหน้า ไม่ทำ OCR; หน้าที่อ่านไม่ได้จะแจ้งให้ตรวจต้นฉบับ เอกสารทุกส่วนต้องให้ผู้ตรวจทานอีกคนอนุมัติก่อนใช้ตอบ กด **ตรวจเนื้อหา** เพื่อกรองส่วนของเอกสาร และดาวน์โหลดต้นฉบับได้เฉพาะเจ้าหน้าที่ที่ล็อกอิน
+
+การเก็บถาวรทั้งคู่มือจะหยุดใช้ทุกส่วนใน RAG รวมถึงส่วนที่อนุมัติแล้ว แต่เก็บต้นฉบับและประวัติการอนุมัติไว้ให้ตรวจอ้างอิง การเก็บถาวรไม่ใช่การลบไฟล์ และเอกสารองค์กรไม่ได้ใช้รอบลบอัตโนมัติของประวัติสนทนา หากต้องเปลี่ยนคู่มือให้เพิ่มฉบับใหม่และเก็บฉบับเก่าถาวร
+
+หน้า **คำถามค้างและผลวิเคราะห์** แยกคำถามที่ไม่พบความรู้/โมเดลตอบจากหลักฐานไม่ได้ออกจากการขอคุยกับคนและปัญหาผู้ให้บริการ เจ้าหน้าที่เขียนคำตอบที่ตรวจสอบแล้วเพื่อสร้างฉบับร่าง หรือผู้ตรวจทานปิดรายการว่าไม่ต้องเพิ่มความรู้ได้ ระบบไม่สร้างคำตอบทางการจากการคาดเดา หน้านี้แสดงคำถามล่าสุด 200 รายการ
+
+### วิเคราะห์หลังจบบทสนทนา
+
+กำหนด `AI_ANALYTICS_ENABLED=true`, `GEMINI_API_KEY`, `GEMINI_MODEL` ใน live เพื่อเปิดใช้ Worker ตรวจเคสปิดหรือไม่มีข้อความสาธารณะใหม่ 30 นาทีทุกประมาณหนึ่งนาที ผลประกอบด้วยเจตนา สรุป ความรู้สึก ผลการช่วยเหลือที่ AI ประเมิน และแท็กความสนใจที่เสนอ ใช้ [Gemini structured output](https://ai.google.dev/gemini-api/docs/generate-content/structured-output?hl=en) พร้อมตรวจรูปแบบและรหัสข้อความอ้างอิงฝั่งเซิร์ฟเวอร์ หากเรียกไม่สำเร็จแสดงสถานะล้มเหลวและให้ผู้ตรวจทานลองใหม่ได้
+
+ส่งเฉพาะข้อความสาธารณะที่รับหรือส่งสำเร็จล่าสุดไม่เกิน 80 ข้อความ, ข้อความละ 1,500 ตัวอักษร และรวมไม่เกิน 32,000 ตัวอักษร ใช้ masking เบื้องต้นรวมชื่อ/อีเมลที่ระบบทราบก่อนส่ง ไม่รวมบันทึกภายใน สื่อ และข้อความที่ถอนแล้ว หน้าผลแสดงจำนวนข้อความที่ใช้และการตัดเนื้อหา Masking ไม่รับประกันลบข้อมูลระบุตัวตนในภาษาธรรมชาติครบทั้งหมด จึงปิดฟีเจอร์นี้ไว้โดยค่าเริ่มต้น
+
+ผล AI เป็นข้อเสนอแนะ ไม่เขียนทับสถานะเคส ผลปิดเคส หรือแท็กสมาชิกโดยอัตโนมัติ เมื่อข้อความหรือสถานะเปลี่ยน ระบบซ่อนผลรุ่นเก่าและทิ้งผลที่กำลังคำนวณจากรุ่นเก่า เมื่อ unsend/หมดอายุ จะลบผลวิเคราะห์ของเคส ถอนคำถามค้าง และลบเนื้อหากับเวอร์ชันเผยแพร่ของความรู้ที่สร้างจากคำถามนั้น โหมด demo ไม่เรียกโมเดลและไม่สร้าง sentiment สมมติ
+
 ## การเปิดใช้บริการจริง
 
-คัดลอก `.env.example` เป็น `.env` และกำหนดค่าขององค์กรเอง **ห้ามเก็บ secrets ลง repository**
+บน Plesk ใช้ `install:plesk` สร้าง `.env` ตาม [คู่มือติดตั้ง](docs/PLESK-INSTALL.md) หากติดตั้งด้วยมือบนระบบใหม่จึงคัดลอก `.env.example` แล้วเปลี่ยนเป็นค่าจริงตาม [คู่มือ .env](docs/ENVIRONMENT.md) อย่าทับไฟล์เดิมหรือเปลี่ยน encryption key ของระบบที่มีข้อมูลแล้ว **ห้ามเก็บ secrets ลง repository**
 
 | ค่า | การใช้งาน |
 | --- | --- |
 | `APP_MODE=live` | ปิด demo login, mock send และการจำลองสมาชิกทั้งหมด |
-| `DATABASE_URL` | PostgreSQL ที่มี extension pgvector |
+| `DATABASE_URL` | MySQL 8.0.17+ / MariaDB 10.6+ หรือ PostgreSQL ที่มี pgvector |
+| `MYSQL_SSL_CA` | path ของ CA เฉพาะสำหรับ MySQL TLS ถ้าผู้ให้บริการกำหนด |
+| `WORKER_MODE` | `opportunistic` สำหรับ Plesk ไม่มี cron; `continuous` เมื่อมี worker ทำงานต่อเนื่องจริง |
 | `DATA_ENCRYPTION_KEY` | base64 ของ 32 random bytes; สร้างด้วย `openssl rand -base64 32` และสำรองแยกอย่างปลอดภัย |
 | `APP_ORIGIN` | HTTPS origin เช่น `https://bot.reunion.scicu-alumni.com` |
 | `ADMIN_EMAIL`, `ADMIN_PASSWORD` | สร้างบัญชีผู้ดูแลครั้งแรก; รหัสผ่านอย่างน้อย 12 ตัวอักษร |
@@ -88,6 +122,7 @@ Demo มี **งานบริการสมาชิก / พิมพ์ช
 | `LINE_SUPERVISOR_ALERT_USER_ID` | ผู้รับ LINE แจ้งเคสที่รอเกิน 5 นาที ควรเป็น Supervisor; ไม่กำหนดจะไม่ส่งการแจ้งเตือนนี้ใน live |
 | `GEMINI_API_KEY`, `GEMINI_MODEL` | โมเดลข้อความที่ยังเปิดให้บริการและผ่านการทดสอบกับข้อมูลขององค์กร |
 | `GEMINI_EMBEDDING_MODEL` | โมเดลที่รองรับ embedding 768 มิติ; เว้นว่างเพื่อใช้ keyword retrieval |
+| `AI_ANALYTICS_ENABLED` | ค่าเริ่มต้น false; เปิดวิเคราะห์บทสนทนาหลังจบเคสด้วย Gemini ใน live เท่านั้น |
 | `CUSA_SSO_ORIGIN` | `https://sso.reunion.scicu-alumni.com` |
 | `CUSA_CLIENT_ID`, `CUSA_API_KEY` | Application UUID และคีย์ฝั่ง Backend ที่มี `identity:read` |
 | `CHAT_RETENTION_DAYS`, `DATASET_RETENTION_DAYS` | ค่าเริ่มต้น 180 วันทั้งคู่ |
@@ -132,9 +167,9 @@ docker compose up -d db
 docker compose --profile live up -d --build app
 ```
 
-แอปและ worker อยู่ใน process เดียว ต้องรันต่อเนื่องบน VM/VPS หรือโฮสต์ที่ให้ CPU ระหว่างไม่มี HTTP request อย่าใช้ background worker นี้บน Cloud Run แบบ CPU เฉพาะช่วง request โดยไม่มีการปรับ deployment
+การรันด้วย Docker ใช้แอปและ worker ใน process เดียว ต้องมี CPU ระหว่างไม่มี HTTP request อย่าใช้บน Cloud Run แบบ CPU เฉพาะช่วง request โดยไม่มีการปรับ deployment สำหรับ Plesk Shared Hosting ใช้ `WORKER_MODE=opportunistic` ตาม [คู่มือติดตั้ง](docs/PLESK-INSTALL.md); ถ้า Passenger พัก งานจะรอ request ถัดไป หากต้องส่งตรงเวลาโดยไม่มี traffic ต้องจัดตัวเรียก HTTPS ภายนอกหรือ worker ต่อเนื่องเพิ่มเติม
 
-ไฟล์แนบปัจจุบันอยู่บน persistent local volume หากรันหลาย replica ต้องใช้ shared storage หรือเพิ่ม object-storage adapter ก่อน ข้อมูลข้อความใน production ใช้ PostgreSQL ส่วน media URL มีลายเซ็นและอายุหนึ่งชั่วโมงเพื่อให้ LINE ดาวน์โหลดภาพที่เจ้าหน้าที่ส่ง
+ไฟล์แนบปัจจุบันอยู่บน persistent local volume หากรันหลาย replica ต้องใช้ shared storage หรือเพิ่ม object-storage adapter ก่อน ข้อมูลข้อความใน production ใช้ MySQL/MariaDB หรือ PostgreSQL ส่วน media URL มีลายเซ็นและอายุหนึ่งชั่วโมงเพื่อให้ LINE ดาวน์โหลดภาพที่เจ้าหน้าที่ส่ง
 
 ไฟล์ Docker เตรียมไว้แล้ว แต่ยังไม่ได้ทดสอบการรัน container บนเครื่องนี้ เพราะ Docker daemon ไม่ได้เปิดอยู่
 
@@ -147,7 +182,7 @@ docker compose --profile live up -d --build app
 - ตัวอย่างฝึกอัตโนมัติในรุ่นนี้เป็นข้อความ ไม่ดึงบันทึกภายใน ข้อความส่งล้มเหลว หรือภาพมาเป็นคำตอบฝึก
 - ใช้สถานะ `ACCEPTED` หมายถึง LINE รับ API request ไม่ได้ยืนยันการส่งถึงเครื่องหรือการอ่านของสมาชิก
 - การหมดอายุ/unsend จะถอนตัวอย่างที่เกี่ยวข้องและทำให้ snapshot นั้นดาวน์โหลดไม่ได้อีก การถอนนี้ไม่สามารถเรียกคืนไฟล์ที่ผู้ใช้ดาวน์โหลดออกไปแล้วหรือย้อนการฝึกโมเดลภายนอกได้
-- ต้องสำรอง PostgreSQL, `.data/attachments` และ encryption key ให้สัมพันธ์กัน พร้อมกำหนดการลบข้อมูลใน backup ตามนโยบายขององค์กร การทำลาย key ทำให้ข้อมูลเข้ารหัสเดิมอ่านไม่ได้
+- ต้องสำรองฐานข้อมูล, `.data/attachments` และ encryption key ให้สัมพันธ์กัน พร้อมกำหนดการลบข้อมูลใน backup ตามนโยบายขององค์กร การทำลาย key ทำให้ข้อมูลเข้ารหัสเดิมอ่านไม่ได้
 
 ## การทดสอบ
 
@@ -159,15 +194,15 @@ npm run build
 npm run test:e2e
 ```
 
-API tests ใช้ PostgreSQL engine ใน PGlite และ mock เฉพาะการเรียกผู้ให้บริการ ครอบคลุม raw signature, duplicate webhook, atomic claim, authorization, durable outbox, Reply timeout, Push retry, training approvals, source deletion, draft isolation และ CUSA contract
+API tests ใช้ PGlite เป็นค่าเริ่มต้น และรันชุดเดียวกันกับ MySQL/MariaDB ได้โดยตั้ง `TEST_MYSQL_URL=mysql://.../cusa_test` ไปยังฐานข้อมูลทดสอบเฉพาะ ผู้ใช้ทดสอบต้องสร้าง/ลบฐานข้อมูลย่อยได้ แต่ละ fixture สร้างฐานใหม่แล้วลบเฉพาะของตัวเอง ห้ามใช้ URL ระบบจริง Tests mock เฉพาะการเรียกผู้ให้บริการ ครอบคลุม raw signature, duplicate webhook, atomic claim, authorization, durable outbox, Reply timeout, Push retry, training approvals, source deletion, draft isolation และ CUSA contract
 
 Browser tests ใช้ Chrome ที่ติดตั้งบน macOS และบันทึกภาพลง `artifacts/`; แก้ `playwright.config.ts` ให้ใช้ browser/channel ของเครื่องอื่นได้ Tests สร้างเฉพาะข้อมูลสมมติใน demo workspace
 
 ## ขอบเขตที่ยังไม่ได้เปิดใช้
 
-รุ่นนี้เน้น Agent Inbox และข้อมูลสำหรับ tuning ที่ตกลงให้เป็นแกนหลัก: ยังไม่มี semantic answer cache, PDF/OCR ingestion, AI สร้าง Flex Message, AI sentiment/post-session analytics หรือการฝึกโมเดลจริงอัตโนมัติ Analytics ที่แสดงเป็นข้อมูลเคสจากฐานข้อมูล ไม่มีการจำลองผล sentiment หรืออัตราความแม่นยำ
+รุ่นนี้เน้น Agent Inbox และข้อมูลสำหรับ tuning ที่ตกลงให้เป็นแกนหลัก: ยังไม่มี semantic answer cache, OCR สำหรับ PDF สแกน, AI สร้าง Flex Message หรือการฝึกโมเดลจริงอัตโนมัติ ไม่มีการจำลองผล sentiment หรืออัตราความแม่นยำ
 
-การสรุปความสนใจด้วย AI ยังต้องพัฒนาต่อ ระบบคิวและเซสชันรุ่นนี้ใช้ PostgreSQL แทน Redis; เป้าหมายเวลา AI ตอบไม่เกิน 3 วินาทีและ uptime ยังต้องวัดบนระบบที่ติดตั้งจริง
+แท็กความสนใจจาก AI เป็นข้อเสนอแนะให้เจ้าหน้าที่ตรวจและแก้แท็กสมาชิกเอง ระบบคิวและเซสชันรุ่นนี้ใช้ฐานข้อมูลแอปแทน Redis; เป้าหมายเวลา AI ตอบไม่เกิน 3 วินาทีและ uptime ยังต้องวัดบนระบบที่ติดตั้งจริง
 
 การเชื่อม LINE, Google Gemini และ CUSA จริงต้องทดสอบกับ credentials และบัญชีขององค์กรก่อนเปิดบริการ ขณะพัฒนาทดสอบสัญญา CUSA จาก OpenAPI ที่แนบมา ไม่ได้เข้าสู่บัญชีหรือส่งข้อความถึงบุคคลจริง
 
@@ -175,16 +210,26 @@ Browser tests ใช้ Chrome ที่ติดตั้งบน macOS แล
 
 ```text
 src/                    React UI และ CSS responsive
+install.mjs             ตัวติดตั้ง Plesk พร้อมสร้างการตั้งค่าและตรวจฐานข้อมูล
+app.cjs                 Startup File สำหรับ Plesk / Passenger
+cron.cjs                ทางเลือก Scheduled Task สำหรับระบบ PostgreSQL เดิม
 server/app.ts           HTTP API, auth, role checks, validation
 server/conversations.ts Case transitions และข้อความเจ้าหน้าที่
 server/tickets.ts        หน่วยงาน การโอนเคส ประวัติ และการแจ้งเตือนผู้รับ
 server/audiences.ts      เงื่อนไขกลุ่มเป้าหมายที่ใช้ร่วมกันระหว่าง preview และส่งจริง
 server/rich-menus.ts     รายการเมนูและคิวเปลี่ยนเมนูแบบมีเวอร์ชัน
 server/stats.ts          เวลารับเคสและสถิติตามชั่วโมงเวลาไทย
+server/documents.ts      นำเข้า PDF/TXT แยกส่วน และเก็บต้นฉบับเข้ารหัส
+server/insights.ts       คำถามขาดความรู้และผลวิเคราะห์ที่ตรวจรุ่นบทสนทนา
+server/knowledge-routes.ts API เอกสาร คำถามค้าง และผลวิเคราะห์
 server/worker.ts         Durable queue, LINE, RAG และ retention
 server/training.ts       Dataset review, versioning, split และ retraction
 server/sso.ts            LIFF verification + CUSA PKCE
-server/db.ts            PostgreSQL / PGlite adapters
+server/db.ts            เลือก MySQL/MariaDB, PostgreSQL หรือ PGlite
+server/mysql.ts         MySQL/MariaDB adapter และ transaction
+server/mysql-schema.ts  ตาราง InnoDB โดยไม่ใช้ extension/trigger
+server/runtime.ts       ปลุก worker เมื่อรับ HTTP โดยไม่พึ่ง cron
+docs/ENVIRONMENT.md     ที่มาและขั้นตอนตั้ง .env ทุกตัว
 server/schema.ts        SQL schema initialization
 server/security.ts      Encryption, masking, password hashing, signatures
 shared/                 Types ระหว่าง UI และ API

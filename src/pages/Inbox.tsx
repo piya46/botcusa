@@ -175,10 +175,7 @@ export function InboxPage({ agent, demo }: { agent: Agent; demo: boolean }) {
         />
       ) : (
         <div className="chat-no-selection">
-          <Empty
-            title="พร้อมดูแลบทสนทนาถัดไป"
-            description="เลือกสมาชิกจากรายการเพื่ออ่านและตอบข้อความ"
-          />
+          <Empty title="เลือกบทสนทนา" description="เปิดเคสเพื่ออ่านหรือตอบข้อความ" />
         </div>
       )}
       {simulate && (
@@ -677,7 +674,7 @@ function SelectedCase({
       {close && (
         <Modal
           title="ปิดเคสการดูแลสมาชิก"
-          subtitle="บันทึกผลให้ทีมและผู้ตรวจทานเข้าใจบริบทตรงกัน"
+          subtitle="ระบุผลและสรุปการช่วยเหลือ"
           onClose={() => setClose(false)}
         >
           <form

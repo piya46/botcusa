@@ -51,10 +51,14 @@ export async function audienceOptions(db: Queryable) {
     `SELECT DISTINCT department AS value FROM users WHERE cusa_sub IS NOT NULL AND department IS NOT NULL AND NOT blocked ORDER BY value`,
   );
   const roles = await db.query(
-    `SELECT DISTINCT jsonb_array_elements_text(roles) AS value FROM users WHERE cusa_sub IS NOT NULL AND NOT blocked ORDER BY value`,
+    db.dialect === 'mysql'
+      ? `SELECT DISTINCT j.item AS value FROM users JOIN JSON_TABLE(roles, '$[*]' COLUMNS(item VARCHAR(255) PATH '$')) AS j WHERE cusa_sub IS NOT NULL AND NOT blocked ORDER BY value`
+      : `SELECT DISTINCT jsonb_array_elements_text(roles) AS value FROM users WHERE cusa_sub IS NOT NULL AND NOT blocked ORDER BY value`,
   );
   const tags = await db.query(
-    `SELECT DISTINCT jsonb_array_elements_text(interest_tags) AS value FROM users WHERE NOT blocked ORDER BY value`,
+    db.dialect === 'mysql'
+      ? `SELECT DISTINCT j.item AS value FROM users JOIN JSON_TABLE(interest_tags, '$[*]' COLUMNS(item VARCHAR(255) PATH '$')) AS j WHERE NOT blocked ORDER BY value`
+      : `SELECT DISTINCT jsonb_array_elements_text(interest_tags) AS value FROM users WHERE NOT blocked ORDER BY value`,
   );
   return {
     departments: departments.map((r) => r.value),

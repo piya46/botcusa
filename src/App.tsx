@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Activity,
   ArrowRight,
@@ -30,6 +30,7 @@ import { TrainingPage } from './pages/Training';
 import { KnowledgePage, MembersPage, BroadcastPage, SettingsPage } from './pages/Management';
 import { Connect } from './pages/Connect';
 import { TicketsPage, TicketNotifications } from './pages/Tickets';
+import { InsightsPage } from './pages/Insights';
 
 const navigation = [
   { path: 'overview', title: 'ภาพรวม', en: 'Overview', icon: LayoutDashboard },
@@ -37,8 +38,14 @@ const navigation = [
   { path: 'tickets', title: 'เคสและการส่งต่อ', en: 'Tickets', icon: Ticket },
   { path: 'members', title: 'สมาชิก', en: 'Members', icon: Users },
   { path: 'knowledge', title: 'ฐานความรู้', en: 'Knowledge base', icon: BookOpen },
+  { path: 'insights', title: 'คำถามค้าง / วิเคราะห์', en: 'Insights', icon: Activity },
   { path: 'training', title: 'ชุดข้อมูล AI', en: 'Training studio', icon: Sparkles },
   { path: 'broadcasts', title: 'บรอดแคสต์', en: 'Broadcasts', icon: Send },
+];
+const navigationGroups = [
+  { title: 'งานบริการ', paths: ['overview', 'inbox', 'tickets', 'members'] },
+  { title: 'ความรู้และ AI', paths: ['knowledge', 'insights', 'training'] },
+  { title: 'สื่อสาร', paths: ['broadcasts'] },
 ];
 type Session = { agent: Agent; demo: boolean; agents?: Agent[] };
 export default function App() {
@@ -48,6 +55,18 @@ export default function App() {
     [mobile, setMobile] = useState(false),
     [help, setHelp] = useState(false),
     [search, setSearch] = useState('');
+  const searchInput = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    const shortcut = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        searchInput.current?.focus();
+      }
+      if (e.key === 'Escape') setMobile(false);
+    };
+    addEventListener('keydown', shortcut);
+    return () => removeEventListener('keydown', shortcut);
+  }, []);
   useEffect(() => {
     const update = () => {
       setPath(location.pathname);
@@ -135,42 +154,33 @@ export default function App() {
           </div>
           <ChevronDown size={15} />
         </div>
-        <div className="nav-caption">WORKSPACE</div>
-        <nav aria-label="เมนูหลัก">
-          {navigation.map((n) => (
-            <a
-              key={n.path}
-              href={`/admin/${n.path}`}
-              className={`nav-item ${current === n.path ? 'active' : ''}`}
-              onClick={(e) => {
-                e.preventDefault();
-                go(`/admin/${n.path}`);
-              }}
-            >
-              <n.icon size={19} />
-              <span>{n.title}</span>
-              {n.path === 'training' && <span className="nav-new">AI</span>}
-              {current === n.path && <span className="nav-dot" />}
-            </a>
+        <nav aria-label="เมนูหลัก" className="grouped-navigation">
+          {navigationGroups.map((group) => (
+            <div className="nav-group" key={group.title}>
+              <div className="nav-caption">{group.title}</div>
+              {navigation
+                .filter((n) => group.paths.includes(n.path))
+                .map((n) => (
+                  <a
+                    key={n.path}
+                    href={`/admin/${n.path}`}
+                    className={`nav-item ${current === n.path ? 'active' : ''}`}
+                    aria-current={current === n.path ? 'page' : undefined}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      go(`/admin/${n.path}`);
+                    }}
+                  >
+                    <n.icon size={19} />
+                    <span>{n.title}</span>
+                    {n.path === 'training' && <span className="nav-new">AI</span>}
+                    {current === n.path && <span className="nav-dot" />}
+                  </a>
+                ))}
+            </div>
           ))}
         </nav>
         <div className="sidebar-bottom">
-          <div className="learning-card">
-            <div className="learning-visual">
-              <MessageCircle size={22} />
-              <span />
-              <Sparkles size={19} />
-            </div>
-            <strong>คำตอบที่ดี มีคุณค่าต่อ</strong>
-            <p>
-              ส่งต่อความรู้จากทุกบทสนทนา
-              <br />
-              ให้ผู้ช่วย AI ดูแลสมาชิกได้ดีขึ้น
-            </p>
-            <button onClick={() => go('/admin/training')}>
-              ไปที่ Training studio <ArrowRight size={15} />
-            </button>
-          </div>
           {session.agent.role === 'ADMIN' && (
             <a
               className={`nav-item ${current === 'settings' ? 'active' : ''}`}
@@ -224,7 +234,7 @@ export default function App() {
             </button>
             <span>CUSA Workspace</span>
             <ChevronRight size={14} />
-            <strong>{item?.en ?? 'Settings'}</strong>
+            <strong>{item?.title ?? 'ตั้งค่าระบบ'}</strong>
           </div>
           <div className="topbar-right">
             <form
@@ -237,16 +247,17 @@ export default function App() {
             >
               <Search size={16} />
               <input
+                ref={searchInput}
                 aria-label="ค้นหาทั้งระบบ"
-                placeholder="ค้นหาบทสนทนา…"
+                placeholder="ค้นหาเคส…"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
-              <kbd>↵</kbd>
+              <kbd>⌘ K</kbd>
             </form>
             <div className="connection">
               <i />
-              {session.demo ? 'Demo workspace' : 'Workspace online'}
+              {session.demo ? 'Demo' : 'ออนไลน์'}
             </div>
             <TicketNotifications key={session.agent.id} />
           </div>
@@ -266,6 +277,8 @@ export default function App() {
             <TicketsPage agent={session.agent} />
           ) : current === 'knowledge' ? (
             <KnowledgePage agent={session.agent} />
+          ) : current === 'insights' ? (
+            <InsightsPage agent={session.agent} />
           ) : current === 'members' ? (
             <MembersPage agent={session.agent} />
           ) : current === 'broadcasts' ? (

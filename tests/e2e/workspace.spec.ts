@@ -1,18 +1,8 @@
 import { test, expect } from '@playwright/test';
+import { waitForWorkspace } from './support';
 
-test.beforeEach(async ({ request }) => {
-  await expect
-    .poll(
-      async () => {
-        try {
-          return (await request.get('/api/health')).status();
-        } catch {
-          return 0;
-        }
-      },
-      { timeout: 15000 },
-    )
-    .toBe(200);
+test.beforeEach(async ({ request }, info) => {
+  await waitForWorkspace(request, info);
 });
 
 test('desktop workflow: claim, durable reply, close, review as a second agent, export dataset', async ({
@@ -23,7 +13,7 @@ test('desktop workflow: claim, durable reply, close, review as a second agent, e
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
   await page.goto('/admin/overview');
-  await expect(page.getByRole('heading', { name: 'ทุกบทสนทนา เชื่อมถึงกัน' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'ภาพรวมวันนี้' })).toBeVisible();
   await page.screenshot({ path: 'artifacts/overview-desktop.png', fullPage: true });
   await page.getByRole('button', { name: 'เปิดกล่องข้อความ' }).click();
   await page.getByRole('button', { name: 'จำลองข้อความจากสมาชิก', exact: true }).click();
@@ -120,8 +110,15 @@ test('mobile inbox and management pages fit the viewport without horizontal over
 test('a ticket can be transferred to a department and named owner, accepted and resolved without losing the conversation', async ({
   page,
 }) => {
-  test.setTimeout(60000);
+  test.setTimeout(120000);
   const subject = `ขอติดต่อเจ้าหน้าที่ ทดสอบโอนเคส ${Date.now().toString(36)}`;
+  await page.goto('/admin/settings');
+  await page.getByRole('button', { name: 'ตั้งค่า LINE นลิน · เจ้าหน้าที่', exact: true }).click();
+  await page.getByLabel('LINE User ID ของเจ้าหน้าที่').fill('U33333333333333333333333333333333');
+  await page.getByRole('checkbox', { name: /รับแจ้งเตือนเคสส่งต่อ/ }).check();
+  await page.getByRole('button', { name: 'บันทึก LINE เจ้าหน้าที่' }).click();
+  await expect(page.getByText('บันทึกการแจ้งเตือน LINE แล้ว')).toBeVisible();
+  await page.screenshot({ path: 'artifacts/settings-line-desktop.png', fullPage: true });
   await page.goto('/admin/inbox');
   await page.getByRole('button', { name: 'จำลองข้อความจากสมาชิก', exact: true }).click();
   await page.getByRole('dialog').getByRole('textbox').fill(subject);
@@ -152,6 +149,12 @@ test('a ticket can be transferred to a department and named owner, accepted and 
   const [ticket] = await response.json();
   await page.getByLabel('สลับบัญชีทดลอง').selectOption('33333333-3333-4333-8333-333333333333');
   await page.getByRole('button', { name: /การแจ้งเตือนเคส/ }).click();
+  await expect(
+    page
+      .getByRole('dialog')
+      .getByRole('button')
+      .filter({ hasText: `เคส #${ticket.number} ` }),
+  ).toContainText('LINE: ส่งจำลองแล้ว', { timeout: 15000 });
   await page
     .getByRole('dialog')
     .getByRole('button')

@@ -8,6 +8,8 @@ import {
   MessageCircle,
   Sparkles,
   Users,
+  Ticket,
+  Send,
 } from 'lucide-react';
 import type { DashboardStats } from '../../shared/types';
 import { formatDate, go, relative } from '../api';
@@ -58,19 +60,38 @@ export function Overview() {
   const area = `M ${pad},${H - pad} L ${points.replaceAll(' ', ' L ')} L ${W - pad},${H - pad} Z`;
   return (
     <div className="page overview-page">
-      <PageTitle
-        eyebrow="YOUR WORKSPACE, AT A GLANCE"
-        title="ทุกบทสนทนา เชื่อมถึงกัน"
-        description="ภาพรวมการดูแลสมาชิก และองค์ความรู้ที่เติบโตไปด้วยกัน"
-      >
-        <span className="date-pill">
-          <Clock3 size={15} />
-          {formatDate(new Date(), true)}
-        </span>
-        <button className="button primary" onClick={() => go('/admin/inbox')}>
-          เปิดกล่องข้อความ <ArrowUpRight size={17} />
-        </button>
-      </PageTitle>
+      <section className="overview-hero">
+        <PageTitle
+          eyebrow="WORKSPACE / OVERVIEW"
+          title="ภาพรวมวันนี้"
+          description="คิวงาน สมาชิก และผลการดูแล"
+        >
+          <span className="date-pill">
+            <Clock3 size={15} />
+            {formatDate(new Date(), true)}
+          </span>
+          <button className="button primary" onClick={() => go('/admin/inbox')}>
+            เปิดกล่องข้อความ <ArrowUpRight size={17} />
+          </button>
+        </PageTitle>
+        <div className="hero-status">
+          <span>
+            <i className="pulse-dot" /> สถานะงาน
+          </span>
+          <button onClick={() => go('/admin/inbox?status=BOT')}>
+            <Sparkles size={18} />
+            <span>AI ดูแล</span>
+            <strong>{data.bot}</strong>
+            <ArrowUpRight size={15} />
+          </button>
+          <button onClick={() => go('/admin/inbox?status=CLOSED')}>
+            <CheckCircle2 size={18} />
+            <span>ปิดเคสแล้ว</span>
+            <strong>{data.closed}</strong>
+            <ArrowUpRight size={15} />
+          </button>
+        </div>
+      </section>
       <div className="metrics">
         {cards.map((c) => (
           <button
@@ -98,12 +119,34 @@ export function Overview() {
           </button>
         ))}
       </div>
+      <div className="quick-actions" aria-label="ทางลัดงาน">
+        <button onClick={() => go('/admin/tickets')}>
+          <Ticket size={18} />
+          <span>จัดการเคส</span>
+          <ArrowUpRight size={15} />
+        </button>
+        <button onClick={() => go('/admin/knowledge')}>
+          <BookOpen size={18} />
+          <span>ตรวจความรู้</span>
+          <ArrowUpRight size={15} />
+        </button>
+        <button onClick={() => go('/admin/insights')}>
+          <Sparkles size={18} />
+          <span>เติมคำตอบ</span>
+          <ArrowUpRight size={15} />
+        </button>
+        <button onClick={() => go('/admin/broadcasts')}>
+          <Send size={18} />
+          <span>ส่งข่าวสาร</span>
+          <ArrowUpRight size={15} />
+        </button>
+      </div>
       <div className="overview-grid">
         <section className="panel activity-panel">
           <div className="panel-heading">
             <div>
               <h2>ภาพรวมบทสนทนา</h2>
-              <p>กิจกรรมของสมาชิกในช่วง 7 วันที่ผ่านมา</p>
+              <p>7 วันล่าสุด</p>
             </div>
             <span className="subtle-pill">7 วันล่าสุด</span>
           </div>
@@ -133,8 +176,8 @@ export function Overview() {
               >
                 <defs>
                   <linearGradient id="chart-fill" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#5c9b7d" stopOpacity=".25" />
-                    <stop offset="100%" stopColor="#5c9b7d" stopOpacity="0" />
+                    <stop offset="0%" stopColor="#eab308" stopOpacity=".25" />
+                    <stop offset="100%" stopColor="#eab308" stopOpacity="0" />
                   </linearGradient>
                 </defs>
                 {[0, 1, 2, 3, 4].map((i) => (
@@ -144,7 +187,7 @@ export function Overview() {
                     x2={W - pad}
                     y1={pad + (i * (H - pad * 2)) / 4}
                     y2={pad + (i * (H - pad * 2)) / 4}
-                    stroke="#e9ece8"
+                    stroke="#eae6da"
                     strokeDasharray="4 5"
                   />
                 ))}
@@ -152,7 +195,7 @@ export function Overview() {
                 <polyline
                   points={points}
                   fill="none"
-                  stroke="#38745c"
+                  stroke="#b38b00"
                   strokeWidth="2.5"
                   strokeLinejoin="round"
                 />
@@ -163,7 +206,7 @@ export function Overview() {
                     cy={H - pad - (d.count / max) * (H - pad * 2)}
                     r="4"
                     fill="white"
-                    stroke="#38745c"
+                    stroke="#b38b00"
                     strokeWidth="2"
                   >
                     <title>
@@ -189,7 +232,7 @@ export function Overview() {
         <section className="panel topics-panel">
           <div className="panel-heading">
             <div>
-              <h2>สมาชิกคุยเรื่องอะไร</h2>
+              <h2>หมวดหมู่เคส</h2>
               <p>หมวดหมู่จากเคสทั้งหมด</p>
             </div>
             <MessageCircle size={19} />
@@ -213,7 +256,7 @@ export function Overview() {
               </div>
             ))}
           </div>
-          <div className="panel-footnote">จัดกลุ่มเพื่อให้ทีมดูแลได้ตรงประเด็น</div>
+          <div className="panel-footnote">จากเคสทั้งหมด</div>
         </section>
       </div>
       <Operations data={data.operations} />
@@ -224,7 +267,7 @@ export function Overview() {
               <h2>
                 รอการดูแล <span className="count-bubble">{data.waiting}</span>
               </h2>
-              <p>บทสนทนาที่กำลังรอเจ้าหน้าที่รับเรื่อง</p>
+              <p>เคสที่ยังไม่มีผู้รับงาน</p>
             </div>
             <button
               className="text-button"
@@ -267,18 +310,17 @@ export function Overview() {
         </section>
         <section className="knowledge-callout">
           <div className="callout-top">
-            <span className="eyebrow">HUMAN KNOWLEDGE. BETTER AI.</span>
+            <span className="eyebrow">TRAINING STUDIO</span>
             <Sparkles size={24} />
           </div>
           <h2>
-            คำตอบจากทีม
+            เปลี่ยนคำตอบ
             <br />
-            คือจุดเริ่มต้นของ AI ที่ดี
+            เป็นชุดข้อมูล AI
           </h2>
           <p>
-            คัดเลือกบทสนทนาที่ช่วยสมาชิกได้จริง
+            คัดเลือก · ตรวจทาน · ส่งออก
             <br />
-            ตรวจทาน แล้วส่งต่อเป็นชุดข้อมูลคุณภาพ
           </p>
           <div className="learning-progress">
             <span>
@@ -295,7 +337,7 @@ export function Overview() {
       </div>
       <footer className="page-footer">
         <span>
-          <ShieldIcon /> บทสนทนาถูกจัดเก็บอย่างเป็นระบบ พร้อมตรวจสอบย้อนหลัง
+          <ShieldIcon /> เก็บประวัติ · ตรวจสอบย้อนหลังได้
         </span>
         <span>
           CUSA MEMBER DESK <i /> WORKSPACE

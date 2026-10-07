@@ -5,7 +5,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getConfig, type Config } from '../server/config.js';
-import { openDatabase, type Database, enqueue } from '../server/db.js';
+import { openDatabase, type Database, enqueue } from './database.js';
 import { seed, DEMO_AGENTS } from '../server/seed.js';
 import { buildApp } from '../server/app.js';
 import { Worker } from '../server/worker.js';

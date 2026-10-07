@@ -2,29 +2,60 @@ import { randomUUID, createHash } from 'node:crypto';
 import type { Config } from './config.js';
 import { audit, enqueue, type Database, type Queryable, type Row } from './db.js';
 import { decrypt, encrypt, redact } from './security.js';
-import { lineRequest, gemini, embed, ProviderError, type Fetcher } from './providers.js';
+import {
+  lineRequest,
+  showLineLoading,
+  gemini,
+  embed,
+  ProviderError,
+  type Fetcher,
+} from './providers.js';
 import { systemMessage } from './conversations.js';
 import { revokeMessageData } from './training.js';
 import { deleteFile, mediaUrl, storeFile } from './media.js';
 import { DEFAULT_PROMPT } from './seed.js';
+import { ingestDocument } from './documents.js';
+import { analyzeConversation, queueIdleAnalyses, recordGap } from './insights.js';
+import { deliverTransferLine } from './line-notifications.js';
+
+export function cosineSimilarity(a: number[], b: number[]) {
+  if (!a.length || a.length !== b.length) return 0;
+  let dot = 0,
+    aa = 0,
+    bb = 0;
+  for (let i = 0; i < a.length; i++) {
+    if (!Number.isFinite(a[i]) || !Number.isFinite(b[i])) return 0;
+    dot += a[i] * b[i];
+    aa += a[i] * a[i];
+    bb += b[i] * b[i];
+  }
+  return aa && bb ? dot / Math.sqrt(aa * bb) : 0;
+}
 
 export class Worker {
   private timer?: ReturnType<typeof setInterval>;
   private busy = false;
   private maintenanceAt = 0;
   private task?: Promise<void>;
+  private stopped = false;
   constructor(
     public db: Database,
     public config: Config,
     private fetcher: Fetcher = fetch,
   ) {}
   start() {
-    this.timer = setInterval(() => {
-      this.task = this.tick().catch(() => {});
-    }, 600);
+    this.stopped = false;
+    this.timer = setInterval(() => this.wake(), 600);
     this.timer.unref();
+    this.wake();
+  }
+  // Called after incoming HTTP responses as well as by the timer. Queue rows survive idle restarts.
+  wake() {
+    if (this.busy || this.stopped) return;
+    this.task = this.tick().catch(() => {});
   }
   async stop() {
+    this.stopped = true;
     if (this.timer) clearInterval(this.timer);
     await this.task;
   }
@@ -37,6 +68,10 @@ export class Worker {
       }
       if (Date.now() - this.maintenanceAt > 60_000) {
         await this.maintenance();
+        await this.db.query(
+          `INSERT INTO settings(key,value,updated_at) VALUES('worker_heartbeat',$1,now()) ON CONFLICT(key) DO UPDATE SET value=$1,updated_at=now()`,
+          [JSON.stringify({ at: new Date().toISOString() })],
+        );
         this.maintenanceAt = Date.now();
       }
     } finally {
@@ -45,14 +80,35 @@ export class Worker {
   }
   async runOne(): Promise<boolean> {
     const lease = randomUUID();
-    const [job] = await this.db.query(
-      `UPDATE jobs SET status='RUNNING',attempts=attempts+1,locked_until=now()+interval '2 minutes',lease_token=$1 WHERE id=(
-      SELECT id FROM jobs WHERE (status='PENDING' AND run_at<=now()) OR (status='RUNNING' AND locked_until<now()) ORDER BY run_at FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING *`,
-      [lease],
-    );
+    const job = await this.db.transaction(async (tx) => {
+      const [candidate] = await tx.query(
+        `SELECT id FROM jobs WHERE (status='PENDING' AND run_at<=now()) OR (status='RUNNING' AND locked_until<now()) ORDER BY run_at LIMIT 1 FOR UPDATE SKIP LOCKED`,
+      );
+      if (!candidate) return null;
+      const [claimed] = await tx.query(
+        `UPDATE jobs SET status='RUNNING',attempts=attempts+1,locked_until=now()+interval '2 minutes',lease_token=$1 WHERE id=$2 RETURNING *`,
+        [lease, candidate.id],
+      );
+      return claimed;
+    });
     if (!job) return false;
     try {
       switch (job.kind) {
+        case 'TRANSFER_LINE_ALERT':
+          await deliverTransferLine(this.db, this.config, job.payload.notificationId, this.fetcher);
+          break;
+        case 'INGEST_DOCUMENT':
+          await ingestDocument(this.db, this.config, job.payload.documentId);
+          break;
+        case 'ANALYZE_CONVERSATION':
+          await analyzeConversation(
+            this.db,
+            this.config,
+            job.payload.conversationId,
+            job.payload.revision,
+            this.fetcher,
+          );
+          break;
         case 'WEBHOOK':
           await this.processWebhook(job.payload.eventId);
           break;
@@ -107,9 +163,20 @@ export class Worker {
         ],
       );
       if (!retry && job.kind === 'DELIVERY')
+        await this.setDeliveryStatus(
+          job.payload.messageId,
+          error instanceof ProviderError && error.uncertain ? 'UNKNOWN' : 'FAILED',
+          true,
+        );
+      if (!retry && job.kind === 'INGEST_DOCUMENT')
         await this.db.query(
-          `UPDATE messages SET delivery_status=CASE WHEN $2 THEN 'UNKNOWN' ELSE 'FAILED' END WHERE id=$1 AND delivery_status='QUEUED'`,
-          [job.payload.messageId, error instanceof ProviderError && error.uncertain],
+          `UPDATE knowledge_documents SET status='FAILED',error='ประมวลผลเอกสารไม่สำเร็จ กรุณาอัปโหลดอีกครั้ง' WHERE id=$1 AND status='QUEUED'`,
+          [job.payload.documentId],
+        );
+      if (!retry && job.kind === 'ANALYZE_CONVERSATION')
+        await this.db.query(
+          `UPDATE conversation_analyses SET status='FAILED',error='ประมวลผลไม่สำเร็จ กรุณาลองอีกครั้ง' WHERE conversation_id=$1 AND revision=$2 AND status='QUEUED'`,
+          [job.payload.conversationId, job.payload.revision],
         );
       if (!retry && job.kind === 'BROADCAST') {
         await this.db.query(`UPDATE broadcast_batches SET status='FAILED' WHERE id=$1`, [
@@ -124,6 +191,14 @@ export class Worker {
         await this.db.query(
           `UPDATE users SET rich_menu_status='FAILED' WHERE id=$1 AND rich_menu_revision=$2`,
           [job.payload.userId, job.payload.revision ?? 0],
+        );
+      if (!retry && job.kind === 'TRANSFER_LINE_ALERT')
+        await this.db.query(
+          `UPDATE notifications SET line_status='FAILED',line_payload=NULL,line_error=$2 WHERE id=$1 AND line_status='PENDING'`,
+          [
+            job.payload.notificationId,
+            error instanceof ProviderError ? error.message : 'ส่งแจ้งเตือน LINE ไม่สำเร็จ',
+          ],
         );
       if (!retry && job.kind === 'ALERT' && job.payload.supervisor)
         await this.db.query(
@@ -277,15 +352,11 @@ export class Worker {
           (m.case_status === 'WAITING_FOR_AGENT' && m.metadata.handover === true)
         ))
     ) {
-      await this.db.query(`UPDATE messages SET delivery_status='CANCELLED' WHERE id=$1`, [
-        messageId,
-      ]);
+      await this.setDeliveryStatus(messageId, 'CANCELLED');
       return;
     }
     if (this.config.demo) {
-      await this.db.query(`UPDATE messages SET delivery_status='SIMULATED' WHERE id=$1`, [
-        messageId,
-      ]);
+      await this.setDeliveryStatus(messageId, 'SIMULATED');
       return;
     }
     const body =
@@ -298,20 +369,27 @@ export class Worker {
         : { type: 'text', text: decrypt(m.encrypted_text, this.config.encryptionKey) };
     const mode = m.metadata.delivery_mode;
     if (mode === 'reply_attempted') {
-      await this.db.query(`UPDATE messages SET delivery_status='UNKNOWN' WHERE id=$1`, [messageId]);
+      await this.setDeliveryStatus(messageId, 'UNKNOWN');
       return;
     }
     let replyToken: string | null = null;
     if (!mode) {
       await this.db.transaction(async (tx) => {
         const [token] = await tx.query(
-          `UPDATE messages SET reply_reserved=true WHERE id=(SELECT id FROM messages WHERE conversation_id=$1 AND sender_type='USER' AND reply_token IS NOT NULL AND NOT reply_reserved AND withdrawn_at IS NULL AND reply_received_at>now()-interval '45 seconds' AND created_at>now()-interval '20 minutes' ORDER BY created_at DESC LIMIT 1 FOR UPDATE SKIP LOCKED) RETURNING reply_token`,
+          `SELECT id,reply_token FROM messages WHERE conversation_id=$1 AND sender_type='USER' AND reply_token IS NOT NULL AND NOT reply_reserved AND withdrawn_at IS NULL AND reply_received_at>now()-interval '45 seconds' AND created_at>now()-interval '20 minutes' ORDER BY created_at DESC LIMIT 1 FOR UPDATE SKIP LOCKED`,
           [m.conversation_id],
         );
-        if (token) replyToken = decrypt(token.reply_token, this.config.encryptionKey);
-        await tx.query(`UPDATE messages SET metadata=metadata||$2::jsonb WHERE id=$1`, [
+        if (token) {
+          await tx.query('UPDATE messages SET reply_reserved=true WHERE id=$1', [token.id]);
+          replyToken = decrypt(token.reply_token, this.config.encryptionKey);
+        }
+        const [current] = await tx.query('SELECT metadata FROM messages WHERE id=$1 FOR UPDATE', [
+          messageId,
+        ]);
+        await tx.query(`UPDATE messages SET metadata=$2 WHERE id=$1`, [
           messageId,
           JSON.stringify({
+            ...current.metadata,
             delivery_mode: token ? 'reply_attempted' : 'push',
             retry_key: messageId,
           }),
@@ -326,27 +404,43 @@ export class Worker {
         replyToken ? undefined : messageId,
         this.fetcher,
       );
-      await this.db.query(`UPDATE messages SET delivery_status='ACCEPTED' WHERE id=$1`, [
-        messageId,
-      ]);
+      await this.setDeliveryStatus(messageId, 'ACCEPTED');
     } catch (error) {
       if (replyToken) {
         // Never retry an ambiguous Reply or silently fall back to Push: that could duplicate a message.
-        await this.db.query(`UPDATE messages SET delivery_status=$2 WHERE id=$1`, [
+        await this.setDeliveryStatus(
           messageId,
           error instanceof ProviderError && error.uncertain ? 'UNKNOWN' : 'FAILED',
-        ]);
+        );
         return;
       }
       throw error;
     }
   }
+  private async setDeliveryStatus(messageId: string, status: string, onlyQueued = false) {
+    // Message triggers update the case revision: acquire locks in the same order as unsend.
+    await this.db.transaction(async (tx) => {
+      await tx.query(
+        `SELECT id FROM conversations WHERE id=(SELECT conversation_id FROM messages WHERE id=$1) FOR UPDATE`,
+        [messageId],
+      );
+      await tx.query(
+        `UPDATE messages SET delivery_status=$2 WHERE id=$1 AND (NOT $3::boolean OR delivery_status='QUEUED')`,
+        [messageId, status, onlyQueued],
+      );
+    });
+  }
   async botReply(messageId: string) {
     const [source] = await this.db.query(
-      `SELECT m.*,c.status,c.user_id,u.name,u.email FROM messages m JOIN conversations c ON c.id=m.conversation_id JOIN users u ON u.id=c.user_id WHERE m.id=$1`,
+      `SELECT m.*,c.status,c.user_id,u.name,u.email,u.line_user_id,u.blocked FROM messages m JOIN conversations c ON c.id=m.conversation_id JOIN users u ON u.id=c.user_id WHERE m.id=$1`,
       [messageId],
     );
-    if (!source || source.status !== 'BOT' || source.withdrawn_at) return;
+    if (!source || source.status !== 'BOT' || source.withdrawn_at || source.blocked) return;
+    const [alreadyAnswered] = await this.db.query(
+      `SELECT id FROM messages WHERE sender_type='BOT' AND metadata->>'source_message_id'=$1`,
+      [messageId],
+    );
+    if (alreadyAnswered) return;
     const question = source.redacted_text;
     const [{ count }] = await this.db.query(
       `SELECT count(*)::int AS count FROM messages WHERE conversation_id=$1 AND sender_type='USER' AND created_at>now()-interval '1 minute'`,
@@ -358,6 +452,11 @@ export class Worker {
     let answer =
       'รับเรื่องแล้วค่ะ กำลังส่งต่อให้เจ้าหน้าที่ช่วยดูแล คุณสามารถพิมพ์รายละเอียดเพิ่มเติมในแชตนี้ได้เลยค่ะ';
     let handover = transfer;
+    let handoverReason: string | null = transfer
+      ? source.kind !== 'text'
+        ? 'NON_TEXT'
+        : 'USER_REQUEST'
+      : null;
     let references: Row[] = [];
     let model = 'approved-knowledge';
     const [promptSetting] = await this.db.query(
@@ -365,9 +464,14 @@ export class Worker {
     );
     const activePrompt = promptSetting?.value ?? DEFAULT_PROMPT;
     if (!transfer) {
+      // Do not flash a spinner for delayed/redelivered old messages or human handovers.
+      if (Date.now() - new Date(source.created_at).getTime() < 120_000)
+        await showLineLoading(this.config, source.line_user_id, this.fetcher);
       references = await this.searchKnowledge(question);
-      if (!references.length) handover = true;
-      else if (this.config.demo || !this.config.geminiKey || !this.config.geminiModel)
+      if (!references.length) {
+        handover = true;
+        handoverReason = 'NO_KNOWLEDGE';
+      } else if (this.config.demo || !this.config.geminiKey || !this.config.geminiModel)
         answer = references[0].published_content;
       else {
         try {
@@ -393,9 +497,11 @@ export class Worker {
             this.fetcher,
           );
           handover = answer.includes('[HANDOVER]');
+          if (handover) handoverReason = 'MODEL_UNCERTAIN';
           model = this.config.geminiModel;
         } catch {
           handover = true;
+          handoverReason = 'PROVIDER_ERROR';
         }
       }
     }
@@ -413,6 +519,14 @@ export class Worker {
         [messageId],
       );
       if (existing) return;
+      if (handoverReason === 'NO_KNOWLEDGE' || handoverReason === 'MODEL_UNCERTAIN')
+        await recordGap(
+          tx,
+          source.conversation_id,
+          messageId,
+          redact(question, [source.name, source.email ?? '']),
+          handoverReason,
+        );
       if (handover) {
         await tx.query(
           `UPDATE conversations SET status='WAITING_FOR_AGENT',handover_at=now(),updated_at=now() WHERE id=$1`,
@@ -435,6 +549,7 @@ export class Worker {
             source_message_id: messageId,
             model,
             handover,
+            handover_reason: handoverReason,
             knowledge: references.map((k) => ({ id: k.id, version: k.version })),
             prompt_hash: createHash('sha256').update(activePrompt).digest('hex'),
           }),
@@ -465,10 +580,21 @@ export class Worker {
       try {
         const vector = await embed(this.config, question, this.fetcher);
         if (vector) {
-          const semantic = await this.db.query(
-            `SELECT id,1-(embedding <=> $1::vector) AS similarity FROM knowledge WHERE published_content IS NOT NULL AND status<>'ARCHIVED' AND embedding_model=$2 ORDER BY embedding <=> $1::vector LIMIT 5`,
-            [JSON.stringify(vector), this.config.embeddingModel],
-          );
+          const semantic =
+            this.db.dialect === 'mysql'
+              ? all
+                  .filter(
+                    (k) =>
+                      k.embedding_model === this.config.embeddingModel &&
+                      Array.isArray(k.embedding),
+                  )
+                  .map((k) => ({ id: k.id, similarity: cosineSimilarity(vector, k.embedding) }))
+                  .sort((a, b) => b.similarity - a.similarity)
+                  .slice(0, 5)
+              : await this.db.query(
+                  `SELECT id,1-(embedding <=> $1::vector) AS similarity FROM knowledge WHERE published_content IS NOT NULL AND status<>'ARCHIVED' AND embedding_model=$2 ORDER BY embedding <=> $1::vector LIMIT 5`,
+                  [JSON.stringify(vector), this.config.embeddingModel],
+                );
           for (const s of semantic) {
             const target = scored.find((k) => k.id === s.id);
             if (target && Number(s.similarity) > 0.75) target.score += Number(s.similarity) * 6;
@@ -488,7 +614,7 @@ export class Worker {
       id,
       version,
     ]);
-    if (!k?.published_content) return;
+    if (!k?.published_content || k.status === 'ARCHIVED') return;
     const vector = await embed(
       this.config,
       `${k.published_title}\n${k.published_content}`,
@@ -496,7 +622,7 @@ export class Worker {
     );
     if (vector)
       await this.db.query(
-        `UPDATE knowledge SET embedding=$3::vector,embedding_model=$4 WHERE id=$1 AND version=$2`,
+        `UPDATE knowledge SET embedding=$3::vector,embedding_model=$4 WHERE id=$1 AND version=$2 AND status<>'ARCHIVED' AND published_content IS NOT NULL`,
         [id, version, JSON.stringify(vector), this.config.embeddingModel],
       );
   }
@@ -674,6 +800,7 @@ export class Worker {
       `UPDATE messages SET reply_token=NULL WHERE reply_received_at<now()-interval '20 minutes' AND reply_token IS NOT NULL`,
     );
     await this.queueOverdueAlerts();
+    await queueIdleAnalyses(this.db, this.config);
     const expired = await this.db.query(
       `SELECT id FROM messages WHERE created_at<now()-($1*interval '1 day') AND withdrawn_at IS NULL LIMIT 100`,
       [this.config.chatRetentionDays],

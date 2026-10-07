@@ -3,11 +3,17 @@ import type { Config } from './config.js';
 import { audit, type Database, type Queryable } from './db.js';
 import { AppError, encrypt, decrypt, redact } from './security.js';
 import { systemMessage } from './conversations.js';
+import { queueTransferLine } from './line-notifications.js';
 
 export async function listTeams(db: Queryable) {
-  return db.query(`SELECT t.*,COALESCE((SELECT jsonb_agg(jsonb_build_object('id',a.id,'name',a.name,'role',a.role) ORDER BY a.name)
-    FROM team_members tm JOIN agents a ON a.id=tm.agent_id WHERE tm.team_id=t.id AND a.active AND a.role<>'REVIEWER'),'[]') AS members
-    FROM teams t ORDER BY t.name`);
+  const teams = await db.query('SELECT * FROM teams ORDER BY name');
+  const members = await db.query(
+    `SELECT tm.team_id,a.id,a.name,a.role FROM team_members tm JOIN agents a ON a.id=tm.agent_id WHERE a.active AND a.role<>'REVIEWER' ORDER BY a.name`,
+  );
+  return teams.map((team) => ({
+    ...team,
+    members: members.filter((m) => m.team_id === team.id).map(({ team_id, ...member }) => member),
+  }));
 }
 export async function saveTeam(
   db: Database,
@@ -140,11 +146,18 @@ export async function transferCase(
       `${actor.name} โอนเคสไป ${team.name} · ${recipient?.name ?? 'รอเจ้าหน้าที่ในหน่วยงานรับงาน'} ดูเหตุผลในประวัติการโอน`,
       actor.id,
     );
-    for (const target of recipient ? [recipient] : members)
-      await tx.query(
-        `INSERT INTO notifications(agent_id,conversation_id,transfer_id,title) VALUES($1,$2,$3,$4)`,
-        [target.id, conversationId, transfer.id, `เคส #${c.number} ส่งต่อให้ ${team.name}`],
+    for (const target of (recipient ? [recipient] : members).sort((a, b) =>
+      a.id.localeCompare(b.id),
+    )) {
+      const title = `เคส #${c.number} ส่งต่อให้ ${team.name}`;
+      // Match the configuration/delivery lock order before inserting the recipient's notification.
+      await tx.query(`SELECT id FROM agents WHERE id=$1 FOR SHARE`, [target.id]);
+      const [notification] = await tx.query(
+        `INSERT INTO notifications(agent_id,conversation_id,transfer_id,title) VALUES($1,$2,$3,$4) RETURNING id`,
+        [target.id, conversationId, transfer.id, title],
       );
+      await queueTransferLine(tx, config, notification.id, target.id, title, conversationId);
+    }
     await audit(tx, actor.id, 'CASE_TRANSFERRED', 'conversation', conversationId, {
       transferId: transfer.id,
       teamId: input.teamId,

@@ -8,6 +8,8 @@ export function getConfig(env: NodeJS.ProcessEnv = process.env) {
   const demo = (env.APP_MODE ?? 'demo') === 'demo';
   if (!['demo', 'live'].includes(env.APP_MODE ?? 'demo'))
     throw new Error('APP_MODE must be demo or live');
+  if (env.WORKER_MODE && !['continuous', 'opportunistic'].includes(env.WORKER_MODE))
+    throw new Error('WORKER_MODE must be continuous or opportunistic');
   const dataDir = resolve(env.DATA_DIR ?? '.data');
   const origin = env.APP_ORIGIN ?? 'http://localhost:5180';
   const host = env.HOST ?? '127.0.0.1';
@@ -38,6 +40,14 @@ export function getConfig(env: NodeJS.ProcessEnv = process.env) {
     if (!Number.isInteger(n) || n < 1 || n > 3650) throw new Error('Retention must be 1–3650 days');
     return n;
   };
+  const lineLoadingSeconds = Number(env.LINE_LOADING_SECONDS ?? 30);
+  if (
+    !Number.isInteger(lineLoadingSeconds) ||
+    lineLoadingSeconds < 5 ||
+    lineLoadingSeconds > 60 ||
+    lineLoadingSeconds % 5 !== 0
+  )
+    throw new Error('LINE_LOADING_SECONDS must be 5–60 in increments of 5');
   return {
     demo,
     dataDir,
@@ -45,11 +55,20 @@ export function getConfig(env: NodeJS.ProcessEnv = process.env) {
     host,
     port: Number(env.PORT ?? 3001),
     databaseUrl: env.DATABASE_URL,
+    mysqlSslCa: env.MYSQL_SSL_CA || undefined,
+    workerMode:
+      (env.WORKER_MODE ??
+        (/^(mysql|mariadb):/.test(env.DATABASE_URL ?? '') ? 'opportunistic' : 'continuous')) ===
+      'opportunistic'
+        ? ('opportunistic' as const)
+        : ('continuous' as const),
     encryptionKey,
     adminEmail: env.ADMIN_EMAIL ?? 'admin@cusa.local',
     adminPassword: env.ADMIN_PASSWORD,
     lineSecret: env.LINE_CHANNEL_SECRET ?? '',
     lineToken: env.LINE_CHANNEL_ACCESS_TOKEN ?? '',
+    lineLoadingEnabled: env.LINE_LOADING_ENABLED !== 'false',
+    lineLoadingSeconds,
     lineLoginChannelId: env.LINE_LOGIN_CHANNEL_ID ?? '',
     liffId: env.LIFF_ID ?? '',
     memberMenuId: env.LINE_MEMBER_RICH_MENU_ID ?? '',
@@ -59,6 +78,7 @@ export function getConfig(env: NodeJS.ProcessEnv = process.env) {
     geminiKey: env.GEMINI_API_KEY ?? '',
     geminiModel: env.GEMINI_MODEL ?? '',
     embeddingModel: env.GEMINI_EMBEDDING_MODEL ?? '',
+    analyticsEnabled: env.AI_ANALYTICS_ENABLED === 'true',
     ssoOrigin: env.CUSA_SSO_ORIGIN ?? '',
     ssoClientId: env.CUSA_CLIENT_ID ?? '',
     ssoApiKey: env.CUSA_API_KEY ?? '',

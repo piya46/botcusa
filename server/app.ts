@@ -44,6 +44,8 @@ import {
 import { listRichMenus, queueRichMenu } from './rich-menus.js';
 import { operationalStats } from './stats.js';
 import { listTeams, saveTeam, transferCase, transferHistory } from './tickets.js';
+import { registerKnowledgeRoutes } from './knowledge-routes.js';
+import { configureAgentLine } from './line-notifications.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -177,6 +179,7 @@ export async function buildApp(
     return { agent, demo: config.demo };
   };
   app.get('/api/health', async () => ({ ok: true }));
+  app.get('/api/runtime', async () => ({ workerMode: config.workerMode }));
   app.post(
     '/api/auth/login',
     { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } },
@@ -297,7 +300,29 @@ export async function buildApp(
   );
   app.get('/api/agents', async (request) => {
     admin(request);
-    return db.query(`SELECT id,name,role,active FROM agents ORDER BY name`);
+    return db.query(
+      `SELECT id,name,role,active,line_user_id,line_alerts_enabled FROM agents ORDER BY name`,
+    );
+  });
+  app.patch('/api/agents/:id/line-notifications', async (request) => {
+    const a = admin(request);
+    const b = z
+      .object({
+        userId: z
+          .string()
+          .trim()
+          .regex(/^U[0-9a-f]{32}$/)
+          .nullable(),
+        enabled: z.boolean(),
+      })
+      .parse(request.body);
+    return configureAgentLine(db, a, pathId(request), b);
+  });
+  app.get('/api/line-notifications', async (request) => {
+    admin(request);
+    return db.query(
+      `SELECT n.id,n.title,n.conversation_id,n.line_status,n.line_error,n.line_sent_at,n.created_at,a.name AS agent_name FROM notifications n JOIN agents a ON a.id=n.agent_id ORDER BY n.created_at DESC LIMIT 50`,
+    );
   });
   app.get('/api/notifications', async (request) => {
     const id = actor(request).id;
@@ -308,7 +333,7 @@ export async function buildApp(
     return {
       unread: count.unread,
       items: await db.query(
-        `SELECT n.*,c.number,c.status,c.assigned_agent_id FROM notifications n JOIN conversations c ON c.id=n.conversation_id WHERE n.agent_id=$1 ORDER BY (n.read_at IS NULL) DESC,n.created_at DESC LIMIT 50`,
+        `SELECT n.id,n.agent_id,n.conversation_id,n.transfer_id,n.title,n.read_at,n.created_at,n.line_status,n.line_sent_at,n.line_error,c.number,c.status,c.assigned_agent_id FROM notifications n JOIN conversations c ON c.id=n.conversation_id WHERE n.agent_id=$1 ORDER BY (n.read_at IS NULL) DESC,n.created_at DESC LIMIT 50`,
         [id],
       ),
     };
@@ -486,7 +511,7 @@ export async function buildApp(
     return db.transaction(async (tx) => {
       await assertTrainingEnabled(tx);
       const [original] = await tx.query(
-        `SELECT t.*,u.name,u.email FROM training_examples t JOIN conversations c ON c.id=t.conversation_id JOIN users u ON u.id=c.user_id WHERE t.id=$1 FOR UPDATE OF t`,
+        `SELECT t.*,(SELECT u.name FROM conversations c JOIN users u ON u.id=c.user_id WHERE c.id=t.conversation_id) AS name,(SELECT u.email FROM conversations c JOIN users u ON u.id=c.user_id WHERE c.id=t.conversation_id) AS email FROM training_examples t WHERE t.id=$1 FOR UPDATE`,
         [id],
       );
       if (!original || original.status !== 'DRAFT')
@@ -528,7 +553,7 @@ export async function buildApp(
   });
   app.get('/api/datasets', async () =>
     db.query(
-      `SELECT d.*,count(i.example_id)::int AS example_count,count(i.example_id) FILTER(WHERE i.revoked_at IS NOT NULL)::int AS revoked_count FROM datasets d LEFT JOIN dataset_items i ON i.dataset_id=d.id GROUP BY d.id ORDER BY d.created_at DESC`,
+      `SELECT d.*,(SELECT count(*)::int FROM dataset_items WHERE dataset_id=d.id) AS example_count,(SELECT count(*)::int FROM dataset_items WHERE dataset_id=d.id AND revoked_at IS NOT NULL) AS revoked_count FROM datasets d ORDER BY d.created_at DESC`,
     ),
   );
   app.post('/api/datasets', async (request) =>
@@ -565,9 +590,10 @@ export async function buildApp(
           (rows.length ? '\n' : ''),
       );
   });
+  registerKnowledgeRoutes(app, db, config, actor, reviewer);
   app.get('/api/knowledge', async () =>
     db.query(
-      `SELECT id,title,content,category,keywords,status,version,created_by,updated_by,updated_at,published_content FROM knowledge ORDER BY updated_at DESC`,
+      `SELECT id,title,content,category,keywords,status,version,created_by,updated_by,updated_at,published_content,document_id,source_page,source_index,source_message_id FROM knowledge ORDER BY updated_at DESC`,
     ),
   );
   app.post('/api/knowledge', async (request) => {
@@ -585,7 +611,7 @@ export async function buildApp(
       b = knowledgeBody.parse(request.body),
       id = pathId(request);
     const [k] = await db.query(
-      `UPDATE knowledge SET title=$2,content=$3,category=$4,keywords=$5,status='DRAFT',updated_by=$6,updated_at=now() WHERE id=$1 RETURNING id`,
+      `UPDATE knowledge SET title=$2,content=$3,category=$4,keywords=$5,status='DRAFT',updated_by=$6,updated_at=now() WHERE id=$1 AND status<>'ARCHIVED' RETURNING id`,
       [id, b.title, b.content, b.category, JSON.stringify(b.keywords), a.id],
     );
     if (!k) throw new AppError(404, 'ไม่พบข้อมูล');
@@ -617,7 +643,7 @@ export async function buildApp(
   app.get('/api/members', async (request) => {
     const { search } = z.object({ search: z.string().max(200).default('') }).parse(request.query);
     return db.query(
-      `SELECT u.id,u.name,u.email,u.department,u.cusa_sub,u.roles,u.avatar_color,u.blocked,u.created_at,u.linked_at,u.interest_tags,u.rich_menu_id,u.rich_menu_target,u.rich_menu_status,count(c.id)::int AS conversations FROM users u LEFT JOIN conversations c ON c.user_id=u.id WHERE $1='' OR u.name ILIKE $2 OR u.email ILIKE $2 GROUP BY u.id ORDER BY u.updated_at DESC LIMIT 200`,
+      `SELECT u.id,u.name,u.email,u.department,u.cusa_sub,u.roles,u.avatar_color,u.blocked,u.created_at,u.linked_at,u.interest_tags,u.rich_menu_id,u.rich_menu_target,u.rich_menu_status,(SELECT count(*)::int FROM conversations WHERE user_id=u.id) AS conversations FROM users u WHERE $1='' OR u.name ILIKE $2 OR u.email ILIKE $2 ORDER BY u.updated_at DESC LIMIT 200`,
       [search, `%${search}%`],
     );
   });
@@ -692,7 +718,9 @@ export async function buildApp(
       operations: await operationalStats(db, config),
       published_knowledge: count,
       daily: await db.query(
-        `SELECT to_char(day,'YYYY-MM-DD') AS day,count(c.id)::int AS count,count(c.id) FILTER(WHERE c.assigned_agent_id IS NOT NULL)::int AS human FROM generate_series((now() AT TIME ZONE 'Asia/Bangkok')::date-6,(now() AT TIME ZONE 'Asia/Bangkok')::date,interval '1 day') day LEFT JOIN conversations c ON (c.created_at AT TIME ZONE 'Asia/Bangkok')::date=day::date GROUP BY day ORDER BY day`,
+        db.dialect === 'mysql'
+          ? `WITH RECURSIVE days AS (SELECT DATE(DATE_ADD(now(),INTERVAL 7 HOUR))-INTERVAL 6 DAY AS day UNION ALL SELECT day+INTERVAL 1 DAY FROM days WHERE day<DATE(DATE_ADD(now(),INTERVAL 7 HOUR))) SELECT DATE_FORMAT(days.day,'%Y-%m-%d') AS day,COUNT(c.id) AS count,COUNT(CASE WHEN c.assigned_agent_id IS NOT NULL THEN c.id END) AS human FROM days LEFT JOIN conversations c ON DATE(DATE_ADD(c.created_at,INTERVAL 7 HOUR))=days.day GROUP BY days.day ORDER BY days.day`
+          : `SELECT to_char(day,'YYYY-MM-DD') AS day,count(c.id)::int AS count,count(c.id) FILTER(WHERE c.assigned_agent_id IS NOT NULL)::int AS human FROM generate_series((now() AT TIME ZONE 'Asia/Bangkok')::date-6,(now() AT TIME ZONE 'Asia/Bangkok')::date,interval '1 day') day LEFT JOIN conversations c ON (c.created_at AT TIME ZONE 'Asia/Bangkok')::date=day::date GROUP BY day ORDER BY day`,
       ),
       categories: await db.query(
         `SELECT category,count(*)::int AS count FROM conversations GROUP BY category ORDER BY count DESC`,
@@ -793,7 +821,10 @@ export async function buildApp(
       chatRetentionDays: config.chatRetentionDays,
       datasetRetentionDays: config.datasetRetentionDays,
       failedJobs,
+      workerMode: config.workerMode,
       supervisorAlertsConfigured: config.demo || Boolean(config.supervisorAlertId),
+      agentAlertsConfigured: config.demo || Boolean(config.agentAlertId && config.lineToken),
+      lineLoading: { enabled: config.lineLoadingEnabled, seconds: config.lineLoadingSeconds },
       integrations: {
         line: !config.demo && Boolean(config.lineToken && config.lineSecret),
         sso:
@@ -802,7 +833,12 @@ export async function buildApp(
             config.ssoClientId && config.ssoApiKey && config.lineLoginChannelId && config.liffId,
           ),
         gemini: !config.demo && Boolean(config.geminiKey && config.geminiModel),
-        database: config.databaseUrl ? 'PostgreSQL' : 'Embedded PostgreSQL',
+        database:
+          db.dialect === 'mysql'
+            ? 'MySQL / MariaDB'
+            : config.databaseUrl
+              ? 'PostgreSQL'
+              : 'Embedded PostgreSQL',
       },
       settings: Object.fromEntries(settings.map((s) => [s.key, s.value])),
     };

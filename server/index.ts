@@ -3,12 +3,14 @@ import { openDatabase } from './db.js';
 import { seed } from './seed.js';
 import { buildApp } from './app.js';
 import { Worker } from './worker.js';
+import { attachWorkerWakeup } from './runtime.js';
 
 const config = getConfig();
 const db = await openDatabase(config);
 await seed(db, config);
 const app = await buildApp(db, config, { serveStatic: true, logger: true });
 const worker = new Worker(db, config);
+attachWorkerWakeup(app, worker);
 await app.listen({ host: config.host, port: config.port });
 worker.start();
 app.log.info(

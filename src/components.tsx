@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import {
   ArrowUpRight,
   Check,
@@ -207,7 +208,8 @@ export function Modal({
       previous?.focus();
     };
   }, []);
-  return (
+  // Render outside headers and animated panels so their filters/transforms cannot contain the overlay.
+  return createPortal(
     <div
       className="modal-overlay"
       onMouseDown={(e) => {
@@ -232,7 +234,8 @@ export function Modal({
         </div>
         {children}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 export function Toasts() {
@@ -268,7 +271,7 @@ export function DemoBanner() {
   return (
     <div className="demo-banner">
       <FlaskConical size={14} />
-      <span>พื้นที่ทดลอง · ข้อมูลสมาชิกสมมติ และข้อความจะไม่ถูกส่งไป LINE จริง</span>
+      <span>โหมดทดลอง · ไม่ส่ง LINE จริง</span>
     </div>
   );
 }

@@ -3,6 +3,7 @@ import { ArrowRight, Building2, Bell, Plus, Search, Settings, Ticket, Users } fr
 import type { Agent, Conversation, Team } from '../../shared/types';
 import { formatDate, go, notify, patch, post, relative } from '../api';
 import { Empty, ErrorBox, Loading, Modal, PageTitle, Status, useResource } from '../components';
+import { lineNoticeLabels } from './LineNotifications';
 
 export function TransferDialog({
   conversation,
@@ -25,7 +26,7 @@ export function TransferDialog({
   return (
     <Modal
       title={`โอนเคส #${String(conversation.number).padStart(4, '0')}`}
-      subtitle="ส่งให้หน่วยงานที่ดูแลเรื่องนี้ พร้อมบริบทสำหรับผู้รับผิดชอบคนถัดไป"
+      subtitle="เลือกหน่วยงาน ผู้รับผิดชอบ และเหตุผล"
       onClose={onClose}
     >
       {teams.loading ? (
@@ -146,7 +147,7 @@ export function TicketsPage({ agent }: { agent: Agent }) {
       <PageTitle
         eyebrow="SERVICE TICKETS"
         title="เคสและการส่งต่อ"
-        description="ติดตามงานค้าง แยกหน่วยงานและผู้รับผิดชอบ ดูแลต่อจนสมาชิกได้รับคำตอบ"
+        description="ติดตามงานตามหน่วยงานและผู้รับผิดชอบ"
       >
         {agent.role === 'ADMIN' && (
           <button className="button" onClick={() => setManage(true)}>
@@ -409,6 +410,7 @@ export function TicketNotifications() {
       read_at: string | null;
       created_at: string;
       status: Conversation['status'];
+      line_status: string;
     }[];
   }>('/notifications', 5000);
   const [open, setOpen] = useState(false);
@@ -434,10 +436,7 @@ export function TicketNotifications() {
           {notices.error ? (
             <ErrorBox message={notices.error} retry={notices.reload} />
           ) : !notices.data?.items.length ? (
-            <Empty
-              title="ยังไม่มีงานส่งต่อใหม่"
-              description="เมื่อมีการโอนเคสมาถึงคุณ การแจ้งเตือนจะแสดงที่นี่"
-            />
+            <Empty title="ยังไม่มีงานส่งต่อใหม่" description="เคสที่ส่งถึงคุณจะแสดงที่นี่" />
           ) : (
             <div className="team-list">
               {notices.data.items.map((n) => (
@@ -459,6 +458,7 @@ export function TicketNotifications() {
                   <span>
                     <strong>{n.title}</strong>
                     <small>{formatDate(n.created_at)}</small>
+                    <small>{lineNoticeLabels[n.line_status]}</small>
                   </span>
                   <Status state={n.status} />
                 </button>

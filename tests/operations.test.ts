@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { getConfig, type Config } from '../server/config.js';
-import { openDatabase, type Database } from '../server/db.js';
+import { openDatabase, type Database } from './database.js';
 import { buildApp } from '../server/app.js';
 import { DEMO_AGENTS } from '../server/seed.js';
 import { audienceBody, audienceCount, audienceRecipients } from '../server/audiences.js';
@@ -126,10 +126,13 @@ test('audience filters combine OR within groups and AND between groups; blocked 
 
 test('broadcast preview counts beyond the member list limit; sending freezes the current audience into batches of at most 500', async () => {
   const tag = 'batch-' + randomUUID();
-  await db.query(
-    `INSERT INTO users(line_user_id,name,interest_tags) SELECT 'U'||replace(gen_random_uuid()::text,'-',''),'สมาชิกทดสอบจำนวนมาก',$1::jsonb FROM generate_series(1,503)`,
-    [JSON.stringify([tag])],
-  );
+  await db.transaction(async (tx) => {
+    for (let i = 0; i < 503; i++)
+      await tx.query(
+        `INSERT INTO users(line_user_id,name,interest_tags) VALUES($1,'สมาชิกทดสอบจำนวนมาก',$2)`,
+        ['U' + randomUUID().replaceAll('-', ''), JSON.stringify([tag])],
+      );
+  });
   const audience = { segment: 'all', filters: { tags: [tag] } };
   const preview = await app.inject({
     method: 'POST',
@@ -352,9 +355,13 @@ test('operational analytics count Thai local hours and calculate response times 
       `INSERT INTO conversations(user_id,status,handover_at,claimed_at) VALUES($1,'AGENT_IN_CHARGE',now()-interval '12 minutes',now()-interval '10 minutes') RETURNING id`,
       [u.id],
     );
+    const yesterday = new Date(
+      new Date(Date.now() + 7 * 3600000).toISOString().slice(0, 10) + 'T10:30:00+07:00',
+    );
+    yesterday.setUTCDate(yesterday.getUTCDate() - 1);
     await isolated.query(
-      `INSERT INTO messages(conversation_id,sender_type,created_at) VALUES($1,'USER',((now() AT TIME ZONE 'Asia/Bangkok')::date-1+time '10:30') AT TIME ZONE 'Asia/Bangkok')`,
-      [c.id],
+      `INSERT INTO messages(conversation_id,sender_type,created_at) VALUES($1,'USER',$2)`,
+      [c.id, yesterday],
     );
     const result = await operationalStats(isolated, config);
     assert.equal(result.claimed, 1);

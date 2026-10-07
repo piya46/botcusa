@@ -29,6 +29,8 @@ import type { Agent, Knowledge } from '../../shared/types';
 import { formatDate, notify, patch, post } from '../api';
 import { Avatar, Empty, ErrorBox, Loading, Modal, PageTitle, useResource } from '../components';
 import { MemberActions, menuStatus } from './MemberActions';
+import { KnowledgeDocuments } from './KnowledgeDocuments';
+import { LineNotificationsSettings } from './LineNotifications';
 import {
   AudienceFields,
   AudienceSummary,
@@ -47,6 +49,8 @@ export function KnowledgePage({ agent }: { agent: Agent }) {
   const { data, error, loading, reload } = useResource<Knowledge[]>('/knowledge'),
     [search, setSearch] = useState(''),
     [filter, setFilter] = useState('ALL'),
+    [document, setDocument] = useState(''),
+    [selectedId, setSelectedId] = useState(new URLSearchParams(location.search).get('id') ?? ''),
     [editing, setEditing] = useState<Knowledge | null | undefined>(undefined),
     [title, setTitle] = useState(''),
     [content, setContent] = useState(''),
@@ -62,11 +66,7 @@ export function KnowledgePage({ agent }: { agent: Agent }) {
   };
   return (
     <div className="page">
-      <PageTitle
-        eyebrow="KNOWLEDGE BASE"
-        title="คำตอบที่ทีมเชื่อมั่น"
-        description="จัดการความรู้ที่ผ่านการตรวจทาน เพื่อให้ผู้ช่วย AI ตอบได้ตรงและถูกต้อง"
-      >
+      <PageTitle eyebrow="KNOWLEDGE BASE" title="ฐานความรู้" description="คำตอบและคู่มือสำหรับบอท">
         <button className="button primary" onClick={() => open(null)}>
           <Plus size={17} />
           เพิ่มความรู้
@@ -77,22 +77,37 @@ export function KnowledgePage({ agent }: { agent: Agent }) {
           <BookOpen size={28} />
         </div>
         <div>
-          <h3>เผยแพร่เมื่อพร้อม ใช้งานอย่างมั่นใจ</h3>
-          <p>
-            เนื้อหาใหม่ต้องผ่านผู้ตรวจทานอีกคน ขณะปรับปรุง ผู้ช่วย AI จะใช้ฉบับที่อนุมัติล่าสุดต่อไป
-          </p>
+          <h3>ตรวจทานก่อนเผยแพร่</h3>
+          <p>ผู้ตรวจทานอีกคนอนุมัติ · บอทใช้ฉบับเผยแพร่ล่าสุด</p>
         </div>
         <div className="knowledge-count">
-          <strong>{data?.filter((k) => k.published_content).length ?? 0}</strong>
+          <strong>
+            {data?.filter((k) => k.published_content && k.status !== 'ARCHIVED').length ?? 0}
+          </strong>
           <span>รายการพร้อมใช้</span>
         </div>
       </div>
+      <KnowledgeDocuments
+        agent={agent}
+        selected={document}
+        onSelect={(id) => {
+          setDocument(id);
+          setSelectedId('');
+        }}
+        onChange={reload}
+      />
+      {selectedId && (
+        <button className="text-button" onClick={() => setSelectedId('')}>
+          แสดงความรู้ทั้งหมด
+        </button>
+      )}
       <div className="content-toolbar">
         <div className="tabs">
           {[
             ['ALL', 'ทั้งหมด'],
             ['PUBLISHED', 'เผยแพร่แล้ว'],
             ['DRAFT', 'ฉบับร่าง'],
+            ['ARCHIVED', 'เก็บถาวร'],
           ].map(([value, label]) => (
             <button
               key={value}
@@ -123,6 +138,8 @@ export function KnowledgePage({ agent }: { agent: Agent }) {
             ?.filter(
               (k) =>
                 (filter === 'ALL' || k.status === filter) &&
+                (!document || k.document_id === document) &&
+                (!selectedId || k.id === selectedId) &&
                 `${k.title} ${k.content}`.includes(search),
             )
             .map((k) => (
@@ -133,12 +150,24 @@ export function KnowledgePage({ agent }: { agent: Agent }) {
                   </span>
                   <span className={`badge ${k.status === 'PUBLISHED' ? 'approved' : 'pending'}`}>
                     <i />
-                    {k.status === 'PUBLISHED' ? 'เผยแพร่แล้ว' : 'ฉบับร่าง'}
+                    {k.status === 'PUBLISHED'
+                      ? 'เผยแพร่แล้ว'
+                      : k.status === 'ARCHIVED'
+                        ? 'เก็บถาวร'
+                        : 'ฉบับร่าง'}
                   </span>
                 </div>
                 <span className="eyebrow">{k.category}</span>
                 <h3>{k.title}</h3>
                 <p>{k.content}</p>
+                {k.document_id && (
+                  <a
+                    className="text-button"
+                    href={`/api/knowledge/documents/${k.document_id}/source`}
+                  >
+                    ต้นฉบับ · หน้า {k.source_page}
+                  </a>
+                )}
                 <div className="tag-list">
                   {k.keywords.slice(0, 3).map((word) => (
                     <span key={word}>{word}</span>
@@ -148,7 +177,11 @@ export function KnowledgePage({ agent }: { agent: Agent }) {
                   <span>
                     เวอร์ชัน {k.version} · {formatDate(k.updated_at, true)}
                   </span>
-                  <button className="text-button" onClick={() => open(k)}>
+                  <button
+                    className="text-button"
+                    disabled={k.status === 'ARCHIVED'}
+                    onClick={() => open(k)}
+                  >
                     แก้ไข <Edit3 size={14} />
                   </button>
                 </div>
@@ -173,15 +206,32 @@ export function KnowledgePage({ agent }: { agent: Agent }) {
                     ตรวจทานและเผยแพร่
                   </button>
                 )}
+                {k.status !== 'ARCHIVED' && agent.role !== 'AGENT' && (
+                  <button
+                    className="text-button"
+                    disabled={busy}
+                    onClick={async () => {
+                      setBusy(true);
+                      try {
+                        await post(`/knowledge/${k.id}/archive`);
+                        await reload();
+                        notify('เก็บความรู้ถาวรแล้ว บอทจะไม่ใช้รายการนี้');
+                      } catch (e) {
+                        notify((e as Error).message, 'error');
+                      } finally {
+                        setBusy(false);
+                      }
+                    }}
+                  >
+                    เก็บถาวร
+                  </button>
+                )}
               </article>
             ))}
         </div>
       )}
       {!loading && !data?.length && (
-        <Empty
-          title="เริ่มต้นฐานความรู้ของทีม"
-          description="เพิ่มคำถามและคำตอบที่สมาชิกสอบถามบ่อย"
-        />
+        <Empty title="ยังไม่มีความรู้" description="เพิ่มคำถามและคำตอบที่สมาชิกสอบถามบ่อย" />
       )}
       {editing !== undefined && (
         <Modal
@@ -283,11 +333,7 @@ export function MembersPage({ agent }: { agent: Agent }) {
   );
   return (
     <div className="page">
-      <PageTitle
-        eyebrow="MEMBER DIRECTORY"
-        title="สมาชิกของเรา"
-        description="ข้อมูลสมาชิกและสถานะการเชื่อมต่อบัญชี CUSA กับ LINE"
-      >
+      <PageTitle eyebrow="MEMBER DIRECTORY" title="สมาชิก" description="บัญชี CUSA และสถานะ LINE">
         <span className="date-pill">
           <Users size={16} />
           {data?.length ?? 0} สมาชิก
@@ -464,6 +510,7 @@ const broadcastLabels: Record<string, string> = {
 };
 export function BroadcastPage({ agent, demo }: { agent: Agent; demo: boolean }) {
   const { data, error, loading, reload } = useResource<any[]>('/broadcasts', 5000);
+  const runtime = useResource<{ workerMode: 'continuous' | 'opportunistic' }>('/runtime');
   const [create, setCreate] = useState(false),
     [title, setTitle] = useState(''),
     [content, setContent] = useState(''),
@@ -481,8 +528,8 @@ export function BroadcastPage({ agent, demo }: { agent: Agent; demo: boolean }) 
     <div className="page">
       <PageTitle
         eyebrow="BROADCASTS"
-        title="ส่งข่าวสาร ถึงสมาชิก"
-        description="เตรียมข้อความ เลือกกลุ่ม และตั้งเวลาส่งในนามสมาคม"
+        title="บรอดแคสต์"
+        description="เลือกกลุ่ม · เขียนข้อความ · ตั้งเวลาส่ง"
       >
         <button
           className="button primary"
@@ -517,8 +564,8 @@ export function BroadcastPage({ agent, demo }: { agent: Agent; demo: boolean }) 
           <ErrorBox message={error} retry={reload} />
         ) : !data?.length ? (
           <Empty
-            title="ข่าวสารดี ๆ เริ่มจากข้อความแรก"
-            description="สร้างฉบับร่างเพื่อเตรียมประกาศหรือเชิญชวนสมาชิกเข้าร่วมกิจกรรม"
+            title="ยังไม่มีบรอดแคสต์"
+            description="สร้างข้อความและเลือกผู้รับ"
             action={
               agent.role === 'ADMIN' ? (
                 <button className="button" onClick={() => setCreate(true)}>
@@ -684,6 +731,11 @@ export function BroadcastPage({ agent, demo }: { agent: Agent; demo: boolean }) 
               onChange={(e) => setSchedule(e.target.value)}
             />
           </label>
+          {runtime.data?.workerMode === 'opportunistic' && (
+            <p className="form-info" role="note">
+              โฮสต์นี้ส่งงานเมื่อแอปทำงาน หากแอปพัก ข้อความจะรอจนมีคนเปิดเว็บหรือมี LINE เข้ามา
+            </p>
+          )}
           <div className="modal-footer">
             <button className="button" onClick={() => setSend(null)}>
               กลับไปตรวจ
@@ -732,7 +784,8 @@ export function SettingsPage() {
     [agentName, setAgentName] = useState(''),
     [email, setEmail] = useState(''),
     [password, setPassword] = useState(''),
-    [role, setRole] = useState('AGENT');
+    [role, setRole] = useState('AGENT'),
+    [settingsTab, setSettingsTab] = useState('connections');
   useEffect(() => {
     if (data) {
       setPrompt(data.settings.system_prompt);
@@ -752,14 +805,15 @@ export function SettingsPage() {
     <div className="page">
       <PageTitle
         eyebrow="WORKSPACE SETTINGS"
-        title="ตั้งค่าพื้นที่ทำงาน"
-        description="การเชื่อมต่อระบบ แนวทางตอบของ AI และนโยบายการเตรียมข้อมูล"
+        title="ตั้งค่าระบบ"
+        description="LINE · AI · เจ้าหน้าที่ · นโยบายข้อมูล"
       >
         <button className="button" onClick={() => setAddAgent(true)}>
           <Plus size={16} />
           เพิ่มเจ้าหน้าที่
         </button>
         <button
+          hidden={settingsTab !== 'ai'}
           className="button primary"
           disabled={busy}
           onClick={async () => {
@@ -782,14 +836,37 @@ export function SettingsPage() {
           บันทึกการตั้งค่า <Check size={16} />
         </button>
       </PageTitle>
-      <div className="settings-grid">
+      <div className="content-toolbar">
+        <div className="tabs" aria-label="หมวดตั้งค่า">
+          {[
+            ['connections', 'LINE และการเชื่อมต่อ'],
+            ['ai', 'AI และข้อมูล'],
+            ['audit', 'ประวัติระบบ'],
+          ].map(([id, label]) => (
+            <button
+              key={id}
+              className={settingsTab === id ? 'active' : ''}
+              onClick={() => setSettingsTab(id)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div
+        className={`settings-grid ${settingsTab === 'ai' ? 'settings-ai-view' : ''}`}
+        hidden={settingsTab === 'audit'}
+      >
         <div>
-          <section className="panel settings-panel">
+          {settingsTab === 'connections' && (
+            <LineNotificationsSettings demo={data.demo} loading={data.lineLoading} />
+          )}
+          <section className="panel settings-panel" hidden={settingsTab !== 'ai'}>
             <div className="panel-heading">
               <div>
                 <h2>
                   <Sparkles size={19} />
-                  แนวทางการตอบของผู้ช่วย AI
+                  คำสั่งผู้ช่วย AI
                 </h2>
                 <p>กำหนดบทบาท ภาษา และขอบเขตข้อมูล</p>
               </div>
@@ -806,10 +883,10 @@ export function SettingsPage() {
             />
             <div className="form-info">
               <BookOpen size={16} />
-              ผู้ช่วยค้นข้อมูลจากฐานความรู้ที่เผยแพร่แล้ว เมื่อข้อมูลไม่เพียงพอจะส่งต่อเจ้าหน้าที่
+              ใช้ความรู้ที่อนุมัติแล้ว · ไม่พบคำตอบจะส่งต่อเจ้าหน้าที่
             </div>
           </section>
-          <section className="panel settings-panel">
+          <section className="panel settings-panel" hidden={settingsTab !== 'ai'}>
             <div className="panel-heading">
               <div>
                 <h2>
@@ -822,7 +899,7 @@ export function SettingsPage() {
             <label className="switch-row">
               <div>
                 <strong>เปิดใช้งาน Training Studio</strong>
-                <span>อนุญาตให้สร้างและอนุมัติตัวอย่างฝึก</span>
+                <span>สร้างและอนุมัติตัวอย่างฝึก</span>
               </div>
               <input
                 type="checkbox"
@@ -857,7 +934,7 @@ export function SettingsPage() {
             </p>
           </section>
         </div>
-        <div>
+        <div hidden={settingsTab !== 'connections'}>
           <section className="panel settings-panel">
             <div className="panel-heading">
               <h2>
@@ -870,6 +947,7 @@ export function SettingsPage() {
               ['CUSA SSO · v1.4.0', data.integrations.sso],
               ['Gemini', data.integrations.gemini],
               ['แจ้งเตือน Supervisor', data.supervisorAlertsConfigured],
+              ['แจ้งเตือนเคสใหม่ส่วนกลาง', data.agentAlertsConfigured],
             ].map(([name, connected]) => (
               <div className="integration-row" key={String(name)}>
                 <strong>{name}</strong>
@@ -884,8 +962,7 @@ export function SettingsPage() {
               <span>{data.integrations.database}</span>
             </div>
             <p className="muted small-text">
-              Credentials อ่านจาก environment ฝั่งเซิร์ฟเวอร์ สถานะนี้แสดงการตั้งค่า
-              ยังไม่ใช่ผลทดสอบบริการภายนอก
+              ตั้งค่าคีย์ใน .env แล้วเริ่มแอปใหม่ สถานะนี้ยังไม่ยืนยันการเชื่อมต่อจริง
             </p>
             <label>
               LINE Webhook URL
@@ -935,13 +1012,20 @@ export function SettingsPage() {
               <strong>{data.failedJobs}</strong>
               <span>งานที่ต้องตรวจสอบ</span>
             </div>
-            <p className="muted small-text">
-              ระบบคิวเก็บงานใน PostgreSQL พร้อม retry สำหรับคำขอที่รองรับ
-            </p>
+            {data.workerMode === 'opportunistic' && (
+              <p className="muted small-text">
+                ทำงานเมื่อแอปตื่น · งานตั้งเวลาและแจ้งเตือนอาจล่าช้าช่วงโฮสต์พัก
+              </p>
+            )}
+            {data.settings.worker_heartbeat?.at && (
+              <p className="muted small-text">
+                ทำงานล่าสุด {formatDate(data.settings.worker_heartbeat.at)}
+              </p>
+            )}
           </section>
         </div>
       </div>
-      <section className="panel audit-panel">
+      <section className="panel audit-panel" hidden={settingsTab !== 'audit'}>
         <div className="panel-heading">
           <div>
             <h2>บันทึกการดำเนินการ</h2>

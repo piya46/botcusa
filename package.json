@@ -6,16 +6,23 @@
   "engines": {
     "node": ">=22.12"
   },
+  "overrides": {
+    "shell-quote": "^1.11.0"
+  },
   "scripts": {
     "dev": "concurrently -k -n api,web \"tsx watch server/index.ts\" \"vite --host 127.0.0.1\"",
     "build": "tsc --noEmit && vite build && tsc -p tsconfig.server.json",
     "start": "node --env-file-if-exists=.env dist-server/server/index.js",
+    "install:plesk": "node install.mjs",
+    "worker:once": "node cron.cjs",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test --test-concurrency=1 tests/*.test.ts",
+    "test": "node --import tsx --test --test-concurrency=1 tests/*.test.ts tests/*.test.mjs",
     "test:e2e": "playwright test",
     "check": "npm run typecheck && npm test && npm run build",
-    "format": "prettier --write src server shared tests vite.config.ts playwright.config.ts",
-    "format:check": "prettier --check src server shared tests vite.config.ts playwright.config.ts"
+    "format": "prettier --write src server shared tests vite.config.ts playwright.config.ts install.mjs app.cjs cron.cjs scripts/config-info.mjs",
+    "format:check": "prettier --check src server shared tests vite.config.ts playwright.config.ts install.mjs app.cjs cron.cjs scripts/config-info.mjs",
+    "config:models": "node scripts/config-info.mjs models",
+    "config:rich-menus": "node scripts/config-info.mjs rich-menus"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.8",
@@ -30,9 +37,11 @@
     "dotenv": "^18.0.5",
     "fastify": "^5.12.5",
     "lucide-react": "^1.52.0",
+    "mysql2": "^3.24.5",
     "pg": "^8.23.1",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
+    "unpdf": "^1.8.1",
     "zod": "^4.6.5"
   },
   "devDependencies": {

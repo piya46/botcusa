@@ -18,6 +18,7 @@ export async function lineRequest(
   retryKey?: string,
   fetcher: Fetcher = fetch,
   method?: 'GET' | 'POST' | 'DELETE',
+  timeoutMs = 12_000,
 ) {
   if (config.demo) return { simulated: true };
   if (!config.lineToken)
@@ -32,7 +33,7 @@ export async function lineRequest(
         ...(retryKey ? { 'X-Line-Retry-Key': retryKey } : {}),
       },
       body: body ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(12_000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch {
     throw new ProviderError(0, true, 'ติดต่อ LINE ไม่สำเร็จ ยังไม่ทราบผลการส่ง');
@@ -48,11 +49,35 @@ export async function lineRequest(
   const result = await response.text();
   return result ? JSON.parse(result) : {};
 }
+export async function showLineLoading(config: Config, chatId: string, fetcher: Fetcher = fetch) {
+  if (
+    !config.lineLoadingEnabled ||
+    !/^U[0-9a-f]{32}$/.test(chatId) ||
+    (!config.demo && !config.lineToken)
+  )
+    return 'SKIPPED';
+  try {
+    // Cosmetic only: a failed/slow loading request must not prevent a real answer.
+    await lineRequest(
+      config,
+      '/v2/bot/chat/loading/start',
+      { chatId, loadingSeconds: config.lineLoadingSeconds },
+      undefined,
+      fetcher,
+      'POST',
+      1500,
+    );
+    return config.demo ? 'SIMULATED' : 'ACCEPTED';
+  } catch {
+    return 'FAILED';
+  }
+}
 export async function gemini(
   config: Config,
   prompt: string,
   system: string,
   fetcher: Fetcher = fetch,
+  jsonSchema?: Record<string, unknown>,
 ): Promise<string> {
   if (config.demo || !config.geminiKey || !config.geminiModel)
     throw new AppError(503, 'ยังไม่ได้เชื่อมต่อโมเดล AI');
@@ -65,19 +90,30 @@ export async function gemini(
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: system }] },
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.2, maxOutputTokens: 800 },
+        generationConfig: {
+          temperature: 0.2,
+          maxOutputTokens: jsonSchema ? 4000 : 800,
+          ...(jsonSchema
+            ? { responseMimeType: 'application/json', responseJsonSchema: jsonSchema }
+            : {}),
+        },
       }),
     },
   );
   if (!response.ok) throw new AppError(503, 'โมเดล AI ไม่พร้อมใช้งาน');
   const data = (await response.json()) as {
-    candidates?: { content?: { parts?: { text?: string }[] } }[];
+    candidates?: { finishReason?: string; content?: { parts?: { text?: string }[] } }[];
   };
   const text = data.candidates?.[0]?.content?.parts
     ?.map((p) => p.text ?? '')
     .join('')
     .trim();
   if (!text) throw new AppError(503, 'โมเดลไม่ส่งคำตอบกลับมา');
+  if (jsonSchema) {
+    if (data.candidates?.[0]?.finishReason !== 'STOP' || text.length > 20000)
+      throw new AppError(503, 'ผลวิเคราะห์ไม่ครบถ้วน');
+    return text;
+  }
   return text.slice(0, 4500);
 }
 export async function embed(

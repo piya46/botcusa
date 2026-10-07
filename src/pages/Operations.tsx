@@ -14,7 +14,7 @@ export function Operations({ data }: { data: DashboardStats['operations'] }) {
             <h2>
               <Timer size={18} /> เวลารับเคสของทีม
             </h2>
-            <p>จากส่งต่อถึงรับงานรอบล่าสุดของแต่ละเคส · 30 วันล่าสุด</p>
+            <p>รอบส่งต่อล่าสุด · 30 วัน</p>
           </div>
         </div>
         <div className="sla-metrics">
@@ -53,9 +53,9 @@ export function Operations({ data }: { data: DashboardStats['operations'] }) {
         <div className="panel-heading">
           <div>
             <h2>
-              <Users size={18} /> สมาชิกติดต่อช่วงไหน
+              <Users size={18} /> ช่วงเวลาที่สมาชิกติดต่อ
             </h2>
-            <p>ข้อความขาเข้า 7 วันล่าสุด แยกตามชั่วโมงเวลาไทย</p>
+            <p>7 วันล่าสุด · เวลาไทย</p>
           </div>
         </div>
         <div className="hourly-chart" role="img" aria-label="จำนวนข้อความขาเข้าตามชั่วโมง เวลาไทย">
@@ -76,7 +76,7 @@ export function Operations({ data }: { data: DashboardStats['operations'] }) {
         </div>
         <p className="panel-footnote">
           รวม {data.hourly.reduce((n, h) => n + h.count, 0).toLocaleString()} ข้อความ ·
-          ชี้ที่แท่งเพื่อดูจำนวนแต่ละชั่วโมง
+          ชี้เพื่อดูจำนวน
         </p>
       </section>
     </div>

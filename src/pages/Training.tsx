@@ -74,8 +74,8 @@ export function TrainingPage({ agent }: { agent: Agent }) {
     <div className="page training-page">
       <PageTitle
         eyebrow="TRAINING STUDIO"
-        title="ความรู้จากคน สู่ผู้ช่วย AI"
-        description="คัดเลือก ตรวจทาน และสร้างชุดข้อมูลจากบทสนทนาที่มีคุณภาพ"
+        title="ชุดข้อมูล AI"
+        description="ตรวจคำตอบเจ้าหน้าที่ ก่อนนำไปฝึก AI"
       >
         <button className="button" onClick={() => go('/admin/inbox?status=CLOSED')}>
           <MessageIcon />
@@ -126,7 +126,7 @@ export function TrainingPage({ agent }: { agent: Agent }) {
             <Layers size={20} />
           </span>
           <div>
-            <strong>พร้อมพัฒนา AI</strong>
+            <strong>ส่งออกชุดข้อมูล</strong>
             <small>ชุดข้อมูลที่มีเวอร์ชัน</small>
           </div>
         </div>
@@ -241,7 +241,7 @@ export function TrainingPage({ agent }: { agent: Agent }) {
             </div>
           ) : (
             <Empty
-              title="ชุดข้อมูลเวอร์ชันแรกเริ่มที่นี่"
+              title="ยังไม่มีชุดข้อมูล"
               description="อนุมัติตัวอย่าง แล้วกดสร้างชุดข้อมูลเพื่อบันทึกเวอร์ชัน"
             />
           )

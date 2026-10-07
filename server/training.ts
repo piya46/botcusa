@@ -23,7 +23,7 @@ export async function createExample(
   return db.transaction(async (tx) => {
     await assertTrainingEnabled(tx);
     const [c] = await tx.query(
-      `SELECT c.*,u.name,u.email FROM conversations c JOIN users u ON u.id=c.user_id WHERE c.id=$1 FOR UPDATE OF c`,
+      `SELECT c.*,(SELECT name FROM users WHERE id=c.user_id) AS name,(SELECT email FROM users WHERE id=c.user_id) AS email FROM conversations c WHERE c.id=$1 FOR UPDATE`,
       [conversationId],
     );
     if (!c || c.status !== 'CLOSED')
@@ -131,8 +131,30 @@ export async function createDataset(db: Database, actor: Agent, name: string) {
   });
 }
 export async function revokeMessageData(tx: Queryable, messageId: string) {
+  // Lock the case first, matching message insertion and analysis completion.
+  await tx.query(
+    `SELECT id FROM conversations WHERE id=(SELECT conversation_id FROM messages WHERE id=$1) FOR UPDATE`,
+    [messageId],
+  );
   await tx.query(
     `UPDATE messages SET encrypted_text=NULL,encrypted_payload=NULL,redacted_text='[WITHDRAWN]',reply_token=NULL,metadata='{}',withdrawn_at=now() WHERE id=$1`,
+    [messageId],
+  );
+  await tx.query(
+    `DELETE FROM conversation_analyses WHERE conversation_id=(SELECT conversation_id FROM messages WHERE id=$1)`,
+    [messageId],
+  );
+  await tx.query(
+    `UPDATE knowledge_gaps SET status='REVOKED',question='[WITHDRAWN]' WHERE message_id=$1`,
+    [messageId],
+  );
+  await tx.query(`SELECT id FROM knowledge WHERE source_message_id=$1 FOR UPDATE`, [messageId]);
+  await tx.query(
+    `DELETE FROM knowledge_versions WHERE knowledge_id IN (SELECT id FROM knowledge WHERE source_message_id=$1)`,
+    [messageId],
+  );
+  await tx.query(
+    `UPDATE knowledge SET status='ARCHIVED',title='[WITHDRAWN]',content='[WITHDRAWN]',keywords='[]',published_title=NULL,published_content=NULL,published_keywords='[]',embedding=NULL,embedding_model=NULL,updated_at=now() WHERE source_message_id=$1`,
     [messageId],
   );
   const examples = await tx.query(

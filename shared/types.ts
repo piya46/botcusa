@@ -99,6 +99,9 @@ export type Knowledge = {
   created_by: string;
   updated_at: string;
   published_content: string | null;
+  document_id: string | null;
+  source_page: number | null;
+  source_message_id: string | null;
 };
 export type DashboardStats = {
   total: number;

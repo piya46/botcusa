@@ -128,7 +128,7 @@ export async function sendAgentMessage(
       return { id: existing.id, delivery_status: existing.delivery_status };
     }
     const [c] = await tx.query(
-      `SELECT c.*,u.name FROM conversations c JOIN users u ON c.user_id=u.id WHERE c.id=$1 FOR UPDATE OF c`,
+      `SELECT c.*,(SELECT name FROM users WHERE id=c.user_id) AS name FROM conversations c WHERE c.id=$1 FOR UPDATE`,
       [id],
     );
     if (!c) throw new AppError(404, 'ไม่พบเคส');

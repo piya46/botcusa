@@ -158,4 +158,59 @@ CREATE TABLE IF NOT EXISTS notifications (
 CREATE INDEX IF NOT EXISTS ticket_queue ON conversations(team_id,status,updated_at DESC);
 CREATE INDEX IF NOT EXISTS notification_inbox ON notifications(agent_id,created_at DESC);
 INSERT INTO schema_migrations(version) VALUES(3) ON CONFLICT DO NOTHING;
+CREATE TABLE IF NOT EXISTS knowledge_documents (
+  id UUID PRIMARY KEY, filename TEXT NOT NULL, mime_type TEXT NOT NULL, byte_size INTEGER NOT NULL,
+  sha256 TEXT NOT NULL, title TEXT NOT NULL, category TEXT NOT NULL,
+  created_by UUID NOT NULL REFERENCES agents(id), created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  status TEXT NOT NULL DEFAULT 'QUEUED' CHECK(status IN ('QUEUED','READY','FAILED','ARCHIVED')),
+  pages INTEGER, empty_pages INTEGER NOT NULL DEFAULT 0, error TEXT
+);
+ALTER TABLE knowledge ADD COLUMN IF NOT EXISTS document_id UUID REFERENCES knowledge_documents(id);
+ALTER TABLE knowledge ADD COLUMN IF NOT EXISTS source_page INTEGER;
+ALTER TABLE knowledge ADD COLUMN IF NOT EXISTS source_index INTEGER;
+ALTER TABLE knowledge ADD COLUMN IF NOT EXISTS source_message_id UUID REFERENCES messages(id);
+CREATE UNIQUE INDEX IF NOT EXISTS document_chunk ON knowledge(document_id,source_index);
+CREATE TABLE IF NOT EXISTS knowledge_gaps (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(), conversation_id UUID NOT NULL REFERENCES conversations(id),
+  message_id UUID NOT NULL UNIQUE REFERENCES messages(id), question TEXT NOT NULL, reason TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'OPEN' CHECK(status IN ('OPEN','DRAFTED','DISMISSED','REVOKED')),
+  knowledge_id UUID REFERENCES knowledge(id), created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS analysis_revision BIGINT NOT NULL DEFAULT 0;
+CREATE TABLE IF NOT EXISTS conversation_analyses (
+  conversation_id UUID PRIMARY KEY REFERENCES conversations(id), revision BIGINT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('QUEUED','READY','FAILED')), model TEXT NOT NULL,
+  result JSONB, source_message_ids JSONB NOT NULL DEFAULT '[]', coverage JSONB,
+  error TEXT, analyzed_at TIMESTAMPTZ, requested_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE OR REPLACE FUNCTION bump_message_analysis_revision() RETURNS trigger AS $$
+BEGIN
+  IF NOT NEW.internal AND NEW.sender_type <> 'SYSTEM' THEN
+    UPDATE conversations SET analysis_revision=analysis_revision+1 WHERE id=NEW.conversation_id;
+  END IF;
+  RETURN NEW;
+END; $$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS message_analysis_revision ON messages;
+CREATE TRIGGER message_analysis_revision AFTER INSERT OR UPDATE OF encrypted_text,withdrawn_at,delivery_status ON messages
+  FOR EACH ROW EXECUTE FUNCTION bump_message_analysis_revision();
+CREATE OR REPLACE FUNCTION bump_case_analysis_revision() RETURNS trigger AS $$
+BEGIN
+  IF NEW.status IS DISTINCT FROM OLD.status OR NEW.resolution IS DISTINCT FROM OLD.resolution THEN
+    NEW.analysis_revision := OLD.analysis_revision+1;
+  END IF;
+  RETURN NEW;
+END; $$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS case_analysis_revision ON conversations;
+CREATE TRIGGER case_analysis_revision BEFORE UPDATE OF status,resolution ON conversations
+  FOR EACH ROW EXECUTE FUNCTION bump_case_analysis_revision();
+INSERT INTO schema_migrations(version) VALUES(4) ON CONFLICT DO NOTHING;
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS line_user_id TEXT;
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS line_alerts_enabled BOOLEAN NOT NULL DEFAULT false;
+CREATE UNIQUE INDEX IF NOT EXISTS agent_line_identity ON agents(line_user_id) WHERE line_user_id IS NOT NULL;
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS line_status TEXT NOT NULL DEFAULT 'NOT_CONFIGURED'
+  CHECK(line_status IN ('NOT_CONFIGURED','PENDING','ACCEPTED','SIMULATED','FAILED','CANCELLED'));
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS line_payload TEXT;
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS line_sent_at TIMESTAMPTZ;
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS line_error TEXT;
+INSERT INTO schema_migrations(version) VALUES(5) ON CONFLICT DO NOTHING;
 `;

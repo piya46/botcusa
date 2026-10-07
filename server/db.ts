@@ -3,9 +3,11 @@ import { vector } from '@electric-sql/pglite-pgvector';
 import pg from 'pg';
 import { resolve } from 'node:path';
 import { schema } from './schema.js';
+import { openMysql } from './mysql.js';
 
 export type Row = Record<string, any>;
 export interface Queryable {
+  readonly dialect?: 'postgres' | 'mysql';
   query<T extends Row = Row>(sql: string, params?: unknown[]): Promise<T[]>;
 }
 export interface Database extends Queryable {
@@ -16,10 +18,18 @@ export async function openDatabase(options: {
   databaseUrl?: string;
   dataDir?: string;
   memory?: boolean;
+  migrate?: boolean;
+  mysqlSslCa?: string;
 }): Promise<Database> {
+  if (options.databaseUrl && /^(mysql|mariadb):/.test(options.databaseUrl))
+    return openMysql({ ...options, databaseUrl: options.databaseUrl });
   let db: Database;
   if (options.databaseUrl) {
-    const pool = new pg.Pool({ connectionString: options.databaseUrl, max: 10 });
+    const pool = new pg.Pool({
+      connectionString: options.databaseUrl,
+      max: 5,
+      connectionTimeoutMillis: 10000,
+    });
     db = {
       async query<T extends Row>(sql: string, params?: unknown[]) {
         return (await pool.query<T>(sql, params)).rows;
@@ -46,7 +56,25 @@ export async function openDatabase(options: {
         await pool.end();
       },
     };
-    await pool.query(schema);
+    if (options.migrate !== false) {
+      try {
+        const client = await pool.connect();
+        try {
+          await client.query('BEGIN');
+          await client.query('SELECT pg_advisory_xact_lock(124995,1)');
+          await client.query(schema);
+          await client.query('COMMIT');
+        } catch (error) {
+          await client.query('ROLLBACK');
+          throw error;
+        } finally {
+          client.release();
+        }
+      } catch (error) {
+        await pool.end();
+        throw error;
+      }
+    }
   } else {
     const lite = await PGlite.create({
       dataDir: options.memory ? 'memory://' : resolve(options.dataDir ?? '.data', 'postgres'),
