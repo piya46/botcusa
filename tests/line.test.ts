@@ -89,8 +89,8 @@ test('loading sends the documented body before AI, uses no reply/retry token, an
     ...config,
     demo: false,
     lineToken: 'test-token',
-    geminiKey: 'test-key',
-    geminiModel: 'test-model',
+    vertexProject: 'synthetic-project',
+    vertexModel: 'test-model',
   };
   const { u, c, m } = await conversation();
   await db.query(
@@ -98,23 +98,46 @@ test('loading sends the documented body before AI, uses no reply/retry token, an
     [admin.id],
   );
   const paths: string[] = [];
-  const worker = new Worker(db, cfg, async (url, init) => {
-    paths.push(String(url));
-    if (String(url).includes('/loading/start')) {
-      assert.deepEqual(JSON.parse(String(init?.body)), {
-        chatId: u.line_user_id,
-        loadingSeconds: 30,
-      });
-      assert.equal((init?.headers as Record<string, string>)['X-Line-Retry-Key'], undefined);
-      return new Response('{}', { status: 503 });
-    }
-    return new Response(
-      JSON.stringify({
-        candidates: [{ content: { parts: [{ text: 'คำตอบจาก AI ที่ตรวจสอบแล้ว' }] } }],
-      }),
-      { status: 200 },
-    );
-  });
+  const worker = new Worker(
+    db,
+    cfg,
+    async (url, init) => {
+      paths.push(String(url));
+      if (String(url).includes('/loading/start')) {
+        assert.deepEqual(JSON.parse(String(init?.body)), {
+          chatId: u.line_user_id,
+          loadingSeconds: 30,
+        });
+        assert.equal((init?.headers as Record<string, string>)['X-Line-Retry-Key'], undefined);
+        return new Response('{}', { status: 503 });
+      }
+      return new Response(
+        JSON.stringify({
+          candidates: [
+            {
+              finishReason: 'STOP',
+              content: {
+                parts: [
+                  {
+                    text: JSON.stringify({
+                      action: 'answer',
+                      kind: 'knowledge',
+                      text: 'คำตอบจาก AI ที่ตรวจสอบแล้ว',
+                      reference_ids: JSON.parse(
+                        JSON.parse(String(init?.body)).contents[0].parts[0].text,
+                      ).references.map((r: any) => r.id),
+                    }),
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+        { status: 200 },
+      );
+    },
+    async () => 'synthetic-access-token',
+  );
   await worker.botReply(m.id);
   assert.ok(paths[0].endsWith('/v2/bot/chat/loading/start'));
   assert.ok(paths[1].includes(':generateContent'));

@@ -148,7 +148,9 @@ export function InboxPage({ agent, demo }: { agent: Agent; demo: boolean }) {
                     <strong>{c.name}</strong>
                     <time>{relative(c.updated_at)}</time>
                   </div>
-                  <span className="snippet-subject">{c.subject}</span>
+                  <span className="snippet-subject">
+                    {c.cusa_sub ? 'เชื่อมบัญชี CUSA แล้ว' : 'ผู้ติดต่อ LINE'} · {c.subject}
+                  </span>
                   <p>{c.last_message ?? 'ยังไม่มีข้อความ'}</p>
                   <div className="snippet-bottom">
                     <Status state={c.status} />
@@ -325,7 +327,8 @@ function SelectedCase({
             <strong>{c.name}</strong>
             <span>
               <i className="line-dot" />
-              LINE <span>·</span> เคส #{String(c.number).padStart(4, '0')}
+              {c.cusa_sub ? 'เชื่อมบัญชี CUSA แล้ว' : 'ผู้ติดต่อ LINE'} <span>·</span> เคส #
+              {String(c.number).padStart(4, '0')}
             </span>
           </div>
           <div className="chat-header-actions">
@@ -430,7 +433,7 @@ function SelectedCase({
         <div className="message-timeline">
           <div className="timeline-date">{formatDate(c.created_at, true)}</div>
           {data.messages.map((m) =>
-            m.sender_type === 'SYSTEM' ? (
+            m.sender_type === 'SYSTEM' && m.internal ? (
               <div className="system-message" key={m.id}>
                 <CheckCircle2 size={12} />
                 {m.text}
@@ -453,6 +456,8 @@ function SelectedCase({
                       <>
                         <Sparkles size={12} /> CUSA Assistant
                       </>
+                    ) : m.sender_type === 'SYSTEM' ? (
+                      'CUSA Member Desk'
                     ) : m.sender_type === 'AGENT' ? (
                       m.agent_name?.split(' · ')[0]
                     ) : (
@@ -592,11 +597,15 @@ function SelectedCase({
           <div className="detail-section member-profile">
             <Avatar name={c.name} color={c.avatar_color} size="large" />
             <h3>{c.name}</h3>
+            {c.line_display_name && c.line_display_name !== c.name && (
+              <span>LINE: {c.line_display_name}</span>
+            )}
             <span>{c.department ?? 'ยังไม่ระบุข้อมูลสังกัด'}</span>
             <span className={`badge ${c.cusa_sub ? 'approved' : 'neutral'}`}>
               <ShieldCheck size={12} />
-              {c.cusa_sub ? 'ผูกบัญชี CUSA แล้ว' : 'ยังไม่ผูกบัญชี'}
+              {c.cusa_sub ? 'เชื่อมบัญชี CUSA แล้ว' : 'ยังไม่เชื่อม CUSA'}
             </span>
+            <small className="muted">สถานะสมาชิกสมาคมต้องตรวจจากทะเบียนสมาชิก</small>
           </div>
           <div className="detail-section">
             <h4>

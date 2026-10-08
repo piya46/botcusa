@@ -27,6 +27,7 @@ export type Conversation = {
   close_note: string | null;
   tags: string[];
   name: string;
+  line_display_name: string | null;
   department: string | null;
   cusa_sub: string | null;
   avatar_color: string;

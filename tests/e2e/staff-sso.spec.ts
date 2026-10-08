@@ -5,7 +5,7 @@ test.skip(!process.env.SSO_UI_TEST, 'Requires isolated synthetic SSO UI fixture'
 test('staff login offers CUSA SSO without local email or password fields', async ({ page }) => {
   await page.route('**/api/auth/sso/start', async (route) => {
     expect(route.request().method()).toBe('POST');
-    expect(route.request().postDataJSON()).toEqual({});
+    expect(route.request().postDataJSON()).toEqual({ returnTo: '/admin?reauth=1' });
     await route.fulfill({ json: { url: '/synthetic-sso' } });
   });
   await page.route('**/synthetic-sso', (route) =>

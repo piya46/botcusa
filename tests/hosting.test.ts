@@ -118,14 +118,18 @@ test('semantic retrieval ranks published embeddings without a vector extension o
   const config = {
     ...getConfig({ APP_MODE: 'demo', DATA_DIR: directory }),
     demo: false,
-    geminiKey: 'synthetic',
+    vertexProject: 'synthetic-project',
     embeddingModel: 'test-embedding',
   };
   const vector = Array.from({ length: 768 }, (_, i) => (i === 0 ? 1 : 0));
   const worker = new Worker(
     db,
     config,
-    async () => new Response(JSON.stringify({ embedding: { values: vector } }), { status: 200 }),
+    async () =>
+      new Response(JSON.stringify({ predictions: [{ embeddings: { values: vector } }] }), {
+        status: 200,
+      }),
+    async () => 'synthetic-access-token',
   );
   try {
     const a = DEMO_AGENTS[0];

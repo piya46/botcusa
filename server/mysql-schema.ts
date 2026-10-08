@@ -11,6 +11,17 @@ const ref = (name: string, table: string, required = false, cascade = false) =>
 const table = (name: string, fields: string[]) =>
   `CREATE TABLE IF NOT EXISTS ${name} (${fields.join(',\n')}) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`;
 
+// Checked through information_schema so upgrades work on both MySQL and MariaDB.
+export const mysqlAddColumns = [
+  ['users', 'line_display_name', 'VARCHAR(255)'],
+  ['users', 'line_profile_checked_at', 'DATETIME(3)'],
+  ['agents', 'line_identity_source', 'VARCHAR(20)'],
+  ['agents', 'line_login_channel_id', 'VARCHAR(100)'],
+  ['staff_sso_transactions', 'line_user_id', 'VARCHAR(191)'],
+  ['staff_sso_transactions', 'line_login_channel_id', 'VARCHAR(100)'],
+  ['staff_sso_transactions', 'return_path', 'VARCHAR(250)'],
+] as const;
+
 export const mysqlSchema = [
   table('schema_migrations', ['version INT PRIMARY KEY', time('applied_at', true)]),
   table('agents', [
@@ -390,5 +401,22 @@ mysqlSchema.push(
     'scopes TEXT NOT NULL',
     'rotation_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin',
     'rotation_started_at DATETIME(3)',
+  ]),
+);
+
+mysqlSchema.push(
+  table('line_chats', [
+    'id CHAR(33) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY',
+    "type VARCHAR(10) NOT NULL CHECK(type IN ('group','room'))",
+    'active BOOLEAN NOT NULL',
+    'last_event_at DATETIME(3) NOT NULL',
+    updated,
+  ]),
+  table('line_claim_events', [
+    'id VARCHAR(100) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY',
+    ref('conversation_id', 'conversations'),
+    'encrypted_response LONGTEXT NOT NULL',
+    'reply_attempted BOOLEAN NOT NULL DEFAULT false',
+    created,
   ]),
 );

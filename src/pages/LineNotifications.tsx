@@ -12,7 +12,12 @@ export const lineNoticeLabels: Record<string, string> = {
   FAILED: 'LINE: ส่งไม่สำเร็จ',
   CANCELLED: 'LINE: ยกเลิกแล้ว',
 };
-type Staff = Agent & { active: boolean; line_user_id: string | null; line_alerts_enabled: boolean };
+type Staff = Agent & {
+  active: boolean;
+  line_user_id: string | null;
+  line_alerts_enabled: boolean;
+  line_identity_source: string | null;
+};
 type Notice = {
   id: string;
   title: string;
@@ -70,6 +75,9 @@ export function LineNotificationsSettings({
                       ? 'เปิดรับแจ้งเตือนเคสส่งต่อ'
                       : 'ยังไม่เปิดรับแจ้งเตือน'}
                     {a.line_user_id ? ` · …${a.line_user_id.slice(-6)}` : ''}
+                    {a.line_identity_source
+                      ? ` · ยืนยันผ่าน ${a.line_identity_source === 'SSO' ? 'SSO' : 'LINE และ SSO'}`
+                      : ''}
                   </span>
                 </div>
                 <button
@@ -134,6 +142,7 @@ export function LineNotificationsSettings({
               LINE User ID ของเจ้าหน้าที่
               <input
                 value={userId}
+                readOnly={Boolean(editing.line_identity_source)}
                 onChange={(e) => setUserId(e.target.value)}
                 required={enabled}
                 pattern="U[0-9a-f]{32}"

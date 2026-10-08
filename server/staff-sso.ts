@@ -5,6 +5,8 @@ import type { Agent } from '../shared/types.js';
 import { staffRole } from '../shared/roles.js';
 import { CUSA_CALLBACK_PATH } from '../shared/sso.js';
 import type { SsoCallbackHandler } from './sso-callback.js';
+import { bindStaffLine, ssoLineIdentity } from './staff-line.js';
+import { verifyLineIdentity } from './line-profiles.js';
 import type { Config } from './config.js';
 import { audit, type Database } from './db.js';
 import type { Fetcher } from './providers.js';
@@ -51,7 +53,7 @@ export async function authenticateStaff(
   config: Config,
   hash: string,
   fetcher: Fetcher,
-): Promise<Agent> {
+): Promise<Agent & { verifiedLineUserId?: string }> {
   for (let attempt = 0; attempt < 2; attempt++) {
     const session = await staffAccess(db, config, hash, fetcher);
     try {
@@ -66,7 +68,13 @@ export async function authenticateStaff(
       if (current.rotation_id || current.encrypted_token !== session.encrypted_token) continue;
       if (session.role !== identity.role)
         await db.query('UPDATE agents SET role=$1 WHERE id=$2', [identity.role, session.id]);
-      return { id: session.id, name: session.name, email: session.email, role: identity.role };
+      return {
+        id: session.id,
+        name: session.name,
+        email: session.email,
+        role: identity.role,
+        verifiedLineUserId: ssoLineIdentity(config, identity)?.userId,
+      };
     } catch (error) {
       if (error instanceof AppError && error.statusCode === 401) {
         if (!(await invalidateStaffToken(db, hash, session.encrypted_token))) continue;
@@ -86,7 +94,7 @@ export function registerStaffSso(
   app.post(
     '/api/auth/sso/start',
     { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } },
-    async (_request, reply) => {
+    async (request, reply) => {
       if (
         config.demo ||
         !config.ssoApiKey ||
@@ -94,12 +102,34 @@ export function registerStaffSso(
         !config.ssoOrigin.startsWith('https://')
       )
         throw new AppError(503, 'ยังไม่ได้ตั้งค่า CUSA SSO สำหรับเจ้าหน้าที่');
+      const input = z
+        .object({
+          lineIdToken: z.string().min(20).max(8000).optional(),
+          returnTo: z.string().max(250).optional(),
+        })
+        .parse(request.body ?? {});
+      const returnPath =
+        /^\/admin\/inbox\?case=[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(
+          input.returnTo ?? '',
+        )
+          ? input.returnTo!
+          : '/admin/overview';
+      const linkedLineId = input.lineIdToken
+        ? await verifyLineIdentity(config, input.lineIdToken, fetcher)
+        : null;
       const state = newToken(),
         verifier = newToken(),
         browser = newToken();
       await db.query(
-        `INSERT INTO staff_sso_transactions(state_hash,browser_hash,verifier,expires_at) VALUES($1,$2,$3,now()+interval '10 minutes')`,
-        [tokenHash(state), tokenHash(browser), encrypt(verifier, config.encryptionKey)],
+        `INSERT INTO staff_sso_transactions(state_hash,browser_hash,verifier,expires_at,line_user_id,line_login_channel_id,return_path) VALUES($1,$2,$3,now()+interval '10 minutes',$4,$5,$6)`,
+        [
+          tokenHash(state),
+          tokenHash(browser),
+          encrypt(verifier, config.encryptionKey),
+          linkedLineId,
+          linkedLineId ? config.lineLoginChannelId : null,
+          returnPath,
+        ],
       );
       reply.setCookie('cusa_staff_login', browser, {
         path: CUSA_CALLBACK_PATH,
@@ -116,7 +146,7 @@ export function registerStaffSso(
         state,
         code_challenge: createHash('sha256').update(verifier).digest('base64url'),
         code_challenge_method: 'S256',
-        scope: 'identity:read profile email',
+        scope: config.ssoClaimScopes,
       }).toString();
       return { url: url.toString() };
     },
@@ -172,6 +202,18 @@ export function registerStaffSso(
             account.id,
           ]);
         }
+        const ssoLine = ssoLineIdentity(config, grant.profile);
+        if (
+          transaction.line_user_id &&
+          transaction.line_login_channel_id === config.lineLoginChannelId
+        )
+          await bindStaffLine(
+            tx,
+            account.id,
+            { userId: transaction.line_user_id, channelId: transaction.line_login_channel_id },
+            'OA_LINK',
+          );
+        else if (ssoLine) await bindStaffLine(tx, account.id, ssoLine, 'SSO');
         if (request.cookies.cusa_session)
           await tx.query('DELETE FROM auth_sessions WHERE token_hash=$1', [
             tokenHash(request.cookies.cusa_session),
@@ -207,7 +249,11 @@ export function registerStaffSso(
         sameSite: 'strict',
         maxAge,
       });
-      return reply.redirect('/admin/overview');
+      return reply.redirect(
+        transaction.line_user_id
+          ? '/connect/staff?result=success'
+          : transaction.return_path || '/admin/overview',
+      );
     } catch (error) {
       const reason = error instanceof AppError && error.statusCode === 409 ? 'conflict' : 'denied';
       return reply.redirect(`/admin?auth=${reason}`);

@@ -4,6 +4,7 @@ import { api, post } from '../api';
 import { ErrorBox, Loading } from '../components';
 
 export function Connect() {
+  const staff = location.pathname.startsWith('/connect/staff');
   const [config, setConfig] = useState<{
       liffId: string;
       available: boolean;
@@ -25,12 +26,15 @@ export function Connect() {
       const { default: liff } = await import('@line/liff');
       await liff.init({ liffId: config.liffId });
       if (!liff.isLoggedIn()) {
-        liff.login({ redirectUri: `${location.origin}/connect` });
+        liff.login({ redirectUri: `${location.origin}${staff ? '/connect/staff' : '/connect'}` });
         return;
       }
       const idToken = liff.getIDToken();
       if (!idToken) throw new Error('ไม่พบ LINE ID token กรุณาตรวจสอบ scope openid ของ LIFF');
-      const { url } = await post('/connect/start', { idToken });
+      const { url } = await post(
+        staff ? '/auth/sso/start' : '/connect/start',
+        staff ? { lineIdToken: idToken } : { idToken },
+      );
       location.assign(url);
     } catch (e) {
       setError((e as Error).message);
@@ -41,23 +45,35 @@ export function Connect() {
     <div className="connect-page">
       <div className="connect-card">
         <div className="connect-brand">
-          CUSA <span>MEMBER CONNECT</span>
+          CUSA <span>{staff ? 'STAFF CONNECT' : 'MEMBER CONNECT'}</span>
         </div>
         <div className={`connect-symbol ${result === 'success' ? 'success' : ''}`}>
           {result === 'success' ? <CheckCircle2 size={40} /> : <Link2 size={40} />}
         </div>
-        <h1>{result === 'success' ? 'เชื่อมต่อกันแล้ว' : 'ยืนยันตัวตนสมาชิก'}</h1>
-        <p>
+        <h1>
           {result === 'success'
-            ? 'บัญชี CUSA ของคุณเชื่อมกับ LINE แล้ว กลับไปที่แชตเพื่อใช้บริการสมาชิกได้เลย'
-            : 'เชื่อมบัญชี CUSA กับ LINE เพื่อเข้าถึงข้อมูลและบริการสำหรับสมาชิกศิษย์เก่า'}
+            ? 'เชื่อมต่อกันแล้ว'
+            : staff
+              ? 'เชื่อม LINE รับเคส'
+              : 'เชื่อมบัญชี CUSA'}
+        </h1>
+        <p>
+          {staff
+            ? result === 'success'
+              ? 'เชื่อม LINE ของเจ้าหน้าที่แล้ว รับการแจ้งเตือนและกดรับเคสได้จาก LINE'
+              : 'ยืนยัน LINE ของคุณ แล้วเข้าสู่ CUSA SSO ด้วยบัญชีเจ้าหน้าที่'
+            : result === 'success'
+              ? 'บัญชี CUSA ของคุณเชื่อมกับ LINE แล้ว กลับไปที่แชตเพื่อใช้บริการสมาชิกได้เลย'
+              : 'เชื่อมบัญชี CUSA กับ LINE เพื่อยืนยันตัวตน สถานะสมาชิกสมาคมตรวจจากทะเบียนสมาชิกแยกต่างหาก'}
         </p>
         {result && result !== 'success' && (
           <ErrorBox
             message={
-              result === 'conflict'
-                ? 'บัญชี CUSA นี้ผูกกับ LINE อื่นอยู่แล้ว กรุณาติดต่อเจ้าหน้าที่'
-                : 'การยืนยันตัวตนไม่สำเร็จหรือหมดเวลา กรุณาเริ่มใหม่'
+              result === 'scope'
+                ? 'CUSA ไม่อนุญาต scope ที่แอปขอ กรุณาติดต่อผู้ดูแลระบบ'
+                : result === 'conflict'
+                  ? 'บัญชี CUSA นี้ผูกกับ LINE อื่นอยู่แล้ว กรุณาติดต่อเจ้าหน้าที่'
+                  : 'การยืนยันตัวตนไม่สำเร็จหรือหมดเวลา กรุณาเริ่มใหม่'
             }
           />
         )}

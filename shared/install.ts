@@ -18,12 +18,12 @@ export const installGroups = [
       {
         key: 'LINE_AGENT_ALERT_USER_ID',
         label: 'ผู้รับแจ้งเคสส่วนกลาง',
-        hint: 'LINE User ID เริ่มด้วย U ไม่ใช่ LINE ID ที่ใช้ค้นหาเพื่อน',
+        hint: 'Group ID ขึ้นต้น C หรือ User ID ขึ้นต้น U; ต้องเชิญ OA เข้ากลุ่มก่อน',
       },
       {
         key: 'LINE_SUPERVISOR_ALERT_USER_ID',
         label: 'ผู้รับแจ้งเคสเกิน 5 นาที',
-        hint: 'LINE User ID ของหัวหน้า',
+        hint: 'Group ID ขึ้นต้น C หรือ User ID ของหัวหน้าขึ้นต้น U',
       },
       { key: 'LINE_LOADING_ENABLED', label: 'แสดงกำลังตอบ', options: ['true', 'false'] },
       {
@@ -57,25 +57,44 @@ export const installGroups = [
     ],
   },
   {
-    title: 'Gemini',
-    description: 'Google AI Studio → API Keys',
+    title: 'Vertex AI',
+    description: 'Google Cloud → Vertex AI และ Service Account',
     fields: [
-      { key: 'GEMINI_API_KEY', label: 'API key', secret: true },
       {
-        key: 'GEMINI_MODEL',
+        key: 'GOOGLE_CLOUD_PROJECT',
+        label: 'Google Cloud Project ID',
+        hint: 'Project ID จากหน้า Dashboard ไม่ใช่ Project name',
+      },
+      {
+        key: 'GOOGLE_CLOUD_LOCATION',
+        label: 'Location โมเดลคำตอบ',
+        hint: 'global หรือ region ที่โมเดลรองรับ',
+      },
+      {
+        key: 'GOOGLE_APPLICATION_CREDENTIALS',
+        label: 'ไฟล์ Service Account บนโฮสต์',
+        hint: 'อัปโหลด JSON ไว้นอก public แล้วระบุ path เช่น .secrets/vertex-service-account.json',
+      },
+      {
+        key: 'VERTEX_AI_MODEL',
         label: 'โมเดลคำตอบ',
         hint: 'Model ID ที่รองรับ generateContent ไม่ใส่ models/ นำหน้า',
       },
       {
-        key: 'GEMINI_EMBEDDING_MODEL',
+        key: 'VERTEX_AI_EMBEDDING_MODEL',
         label: 'โมเดลค้นหาความหมาย',
-        hint: 'รองรับ embedContent และ 768 มิติ; เว้นว่างได้',
+        hint: 'gemini-embedding-001 หรือ text-multilingual-embedding-002; เว้นว่างได้',
+      },
+      {
+        key: 'VERTEX_AI_EMBEDDING_LOCATION',
+        label: 'Location ค้นหาความหมาย',
+        hint: 'เช่น us-central1 แยกจากโมเดลคำตอบได้',
       },
       {
         key: 'AI_ANALYTICS_ENABLED',
         label: 'วิเคราะห์บทสนทนา',
         options: ['false', 'true'],
-        hint: 'เมื่อเปิด ระบบส่งบริบทที่ปกปิดข้อมูลเบื้องต้นให้ Gemini',
+        hint: 'เมื่อเปิด ระบบส่งบริบทที่ปกปิดข้อมูลเบื้องต้นให้ Vertex AI',
       },
     ],
   },

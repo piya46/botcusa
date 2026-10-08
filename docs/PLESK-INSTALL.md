@@ -9,7 +9,7 @@
 - Linux + Node.js **22.12 ขึ้นไป** และ npm
 - **MySQL 8.0.17+ หรือ MariaDB 10.6+**, ตาราง InnoDB และผู้ใช้ฐานข้อมูลที่สร้าง/แก้ตารางและ index ได้
 - โดเมน HTTPS และพื้นที่เขียนไฟล์ถาวรสำหรับ `.data`
-- อนุญาต outbound HTTPS ไป LINE, Gemini และ CUSA SSO
+- อนุญาต outbound HTTPS ไป LINE, Vertex AI และ CUSA SSO
 
 ตรวจรุ่นฐานข้อมูลใน phpMyAdmin ด้วย `SELECT VERSION();` ตัวติดตั้งตรวจรุ่นด้วย ระบบใช้ transaction/row lock สำหรับคิวงาน และเก็บ embedding เป็น JSON ค้นหาความใกล้เคียงในแอป ไม่ต้องลง extension และไม่ต้องมีสิทธิ์สร้าง trigger
 
@@ -42,7 +42,7 @@ cusa/                 Application Root
 6. กรอกโดเมนและข้อมูล CUSA SSO → ฐานข้อมูล → บริการเสริม → กดติดตั้ง
 7. เมื่อสำเร็จ **Restart App** อีกครั้ง แล้วเข้าหน้า `/admin/overview` ด้วย CUSA SSO ที่มีบทบาท `admin` ของแอปนี้
 
-ระบบประกอบ `DATABASE_URL` ให้เองเมื่อกรอกส่วนต่าง ๆ ผ่านหน้าจอ จึงไม่ต้อง URL-encode password ด้วยมือ การตั้ง LINE/Gemini ข้ามแล้วเติมภายหลังได้ ส่วน CUSA SSO ต้องพร้อมสำหรับเจ้าหน้าที่ `/install` จะปิดเมื่อระบบติดตั้งแล้วและไม่ใช้สำหรับรีเซ็ตรหัสหรือเปลี่ยนฐานข้อมูลของระบบเดิม
+ระบบประกอบ `DATABASE_URL` ให้เองเมื่อกรอกส่วนต่าง ๆ ผ่านหน้าจอ จึงไม่ต้อง URL-encode password ด้วยมือ การตั้ง LINE/Vertex AI ข้ามแล้วเติมภายหลังได้ ส่วน CUSA SSO ต้องพร้อมสำหรับเจ้าหน้าที่ `/install` จะปิดเมื่อระบบติดตั้งแล้วและไม่ใช้สำหรับรีเซ็ตรหัสหรือเปลี่ยนฐานข้อมูลของระบบเดิม
 
 ถ้า build เกิน RAM ของโฮสต์ ให้ build บนเครื่องก่อนและอัปโหลด `dist` กับ `dist-server` แล้วรัน `install:web` พร้อม argument `--skip-build` โฮสต์ยังต้องลง dependencies เพื่อรันแอป
 
@@ -78,6 +78,8 @@ sh install.sh
 
 ### ติดตั้งและเริ่มแอปด้วยไฟล์
 
+หากต้องการแจ้งเคสเข้ากลุ่ม LINE ให้เปิด **Allow bot to join group chats**, เชิญ OA เข้ากลุ่ม และตั้ง `LINE_AGENT_ALERT_USER_ID` เป็น Group ID ขึ้นต้น `C` ดู ID ได้หลังส่งข้อความในกลุ่มที่หน้า **ตั้งค่าระบบ → LINE และการเชื่อมต่อ → แจ้งเตือนคิวส่วนกลาง** แก้ `.env` บนโฮสต์แล้วกด Restart App; ระบบแจ้งเมื่อเคสเปลี่ยนเป็น “รอเจ้าหน้าที่” ดู [ขั้นตอนตั้งกลุ่มและตรวจสถานะ](ENVIRONMENT.md#6-line-ผู้รับแจ้งเตือนและ-loading)
+
 รัน **install:plesk** อีกครั้ง ตัวติดตั้งจะตรวจค่า → `npm ci --include=dev` → build → ตรวจรุ่น/เชื่อมต่อ MySQL/MariaDB → สร้างตารางและการตั้งค่าเริ่มต้น การติดตั้งไม่เริ่ม worker และไม่ส่ง LINE
 
 ตั้งค่าใน Plesk:
@@ -110,7 +112,7 @@ sh install.sh
 
 ## 4. เชื่อมบริการ
 
-เติม LINE/Gemini/CUSA ใน `.env` แล้ว **Restart App**:
+เติม LINE/Vertex AI/CUSA ใน `.env` แล้ว **Restart App**:
 
 - LINE webhook: `https://bot.your-domain.com/api/webhook`
 - LIFF endpoint: `https://bot.your-domain.com/connect`
@@ -123,3 +125,20 @@ sh install.sh
 สำรอง MySQL/MariaDB, `.data` และ encryption key ให้สัมพันธ์กันก่อนอัปเดต อัปโหลดไฟล์เวอร์ชันใหม่โดยไม่ทับ `.env`/`.data` แล้วรัน installer และ Restart App ไม่ควรอัปเดตขณะมีคำขอส่งข้อความกำลังทำงาน การเปลี่ยน DATABASE_URL ไม่ได้ย้ายข้อมูลเดิมให้อัตโนมัติ
 
 อ้างอิง: [คู่มือ Node.js ของ Hostatom](https://kb.hostatom.com/content/6146/), [Plesk Node.js](https://docs.plesk.com/en-US/obsidian/administrator-guide/website-management/nodejs-support.76652/), [Plesk สร้างฐานข้อมูล](https://support.plesk.com/hc/en-us/articles/12377341716759-How-to-create-a-database-in-Plesk), [Passenger reverse port binding](https://www.phusionpassenger.com/docs/advanced_guides/in_depth/node/reverse_port_binding.html)
+
+## อัปเดตชื่อ LINE, Flex และการรับเคส
+
+Deploy โค้ดแล้วรัน `build` ใน Plesk → Node.js → Run Script จากนั้น Restart App ระบบเพิ่มคอลัมน์และตารางให้อัตโนมัติ ไม่ต้องเปิด `/install` หรือล้างฐานข้อมูลเดิม
+
+ถ้า CUSA บังคับ LINE UID ให้ตั้ง `CUSA_CLAIM_SCOPES=identity:read profile email line` และเปิดอนุญาต `line` ใน “ตั้งค่าข้อมูลและ Consent” ของ CUSA ด้วย
+
+- ระบบทดสอบคนละ Provider: `CUSA_LINE_SAME_PROVIDER=false` เจ้าหน้าที่เชื่อม OA ผ่าน `/connect/staff`
+- Production Provider เดียวกัน: `CUSA_LINE_SAME_PROVIDER=true` แล้วเข้าสู่ SSO ใหม่เพื่อผูก LINE อัตโนมัติ
+
+ดูวิธีตั้งค่าและแก้ `invalid_scope` ใน [ENVIRONMENT.md](ENVIRONMENT.md#เมื่อเปิด-line-uid-แล้วพบ-invalid_scope) การเปลี่ยน Provider ต้องเชื่อม/ล็อกอินใหม่ ไม่ใช้ User ID ของ Provider เก่าทดแทนกัน
+
+## อัปเดตไป Vertex AI
+
+เตรียม Project ที่เปิด Billing/Vertex AI API และ Service Account ที่มี `roles/aiplatform.user` เก็บ JSON ไว้ใน Application Root เช่น `.secrets/vertex-service-account.json` นอก `public` เติม `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION`, `GOOGLE_APPLICATION_CREDENTIALS`, `VERTEX_AI_MODEL` และ embedding ตามต้องการ
+
+รัน **NPM Install → Run Script: build → Restart App** ไม่เปิด `/install` ซ้ำ ค่า Gemini API เดิมไม่ถูกใช้แล้ว ดูรายละเอียดที่ [ENVIRONMENT.md](ENVIRONMENT.md#8-vertex-ai--google-cloud-และโมเดล) บุคลิกและรูปแบบคำตอบเปลี่ยนได้จากหน้า AI และข้อมูลโดยไม่ต้อง Restart

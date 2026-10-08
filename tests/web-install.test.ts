@@ -63,6 +63,47 @@ async function fixture(
   };
 }
 
+test('installer accepts group and room alert destinations while rejecting invalid IDs', async () => {
+  const f = await fixture({
+    inspect: async () => ({ version: '10.6.22-MariaDB', tables: 0 }),
+    bootstrap: async () => {},
+  });
+  try {
+    for (const prefix of ['C', 'U', 'R']) {
+      const result = await f.call('check', {
+        ...input,
+        services: {
+          ...input.services,
+          LINE_AGENT_ALERT_USER_ID: prefix + 'a'.repeat(32),
+          LINE_SUPERVISOR_ALERT_USER_ID: prefix + 'b'.repeat(32),
+        },
+      });
+      assert.equal(result.statusCode, 200, result.body);
+    }
+    for (const value of ['@group', 'C123', 'c' + 'a'.repeat(32), 'https://line.me/group']) {
+      const result = await f.call('check', {
+        ...input,
+        services: { ...input.services, LINE_AGENT_ALERT_USER_ID: value },
+      });
+      assert.equal(result.statusCode, 400, result.body);
+    }
+    const applied = await f.call('apply', {
+      ...input,
+      services: {
+        ...input.services,
+        LINE_AGENT_ALERT_USER_ID: 'C' + 'a'.repeat(32),
+        LINE_SUPERVISOR_ALERT_USER_ID: 'R' + 'b'.repeat(32),
+      },
+    });
+    assert.equal(applied.statusCode, 200, applied.body);
+    const env = parseEnv(await readFile(join(f.root, '.env'), 'utf8'));
+    assert.equal(env.LINE_AGENT_ALERT_USER_ID, 'C' + 'a'.repeat(32));
+    assert.equal(env.LINE_SUPERVISOR_ALERT_USER_ID, 'R' + 'b'.repeat(32));
+  } finally {
+    await f.close();
+  }
+});
+
 test('installer requires private key and same origin, hides secrets, and locks permanently on success', async () => {
   let bootstraps = 0;
   const encryptionKey = randomBytes(32).toString('base64');
@@ -263,5 +304,33 @@ test('installer preserves the existing local data key and detects conflicting Pl
     assert.equal((await conflict.call('check')).statusCode, 409);
   } finally {
     await conflict.close();
+  }
+});
+
+test('installer validates and persists LINE consent scopes independently of Provider matching', async () => {
+  const f = await fixture({
+    inspect: async () => ({ version: '10.6.22-MariaDB', tables: 0 }),
+    bootstrap: async () => {},
+  });
+  try {
+    const services = {
+      ...input.services,
+      CUSA_CLAIM_SCOPES: 'identity:read profile email line',
+      CUSA_LINE_SAME_PROVIDER: 'false',
+    };
+    for (const bad of ['profile email line', 'identity:read unknown']) {
+      const response = await f.call('check', {
+        ...input,
+        services: { ...services, CUSA_CLAIM_SCOPES: bad },
+      });
+      assert.equal(response.statusCode, 400, response.body);
+    }
+    const response = await f.call('apply', { ...input, services });
+    assert.equal(response.statusCode, 200, response.body);
+    const env = parseEnv(await readFile(join(f.root, '.env'), 'utf8'));
+    assert.equal(env.CUSA_CLAIM_SCOPES, services.CUSA_CLAIM_SCOPES);
+    assert.equal(env.CUSA_LINE_SAME_PROVIDER, 'false');
+  } finally {
+    await f.close();
   }
 });

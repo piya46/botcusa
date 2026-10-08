@@ -9,6 +9,8 @@ import { audit, type Database } from './db.js';
 import { queueRichMenu } from './rich-menus.js';
 import { AppError, decrypt, encrypt, newToken, tokenHash } from './security.js';
 import type { Fetcher } from './providers.js';
+import { verifyLineIdentity } from './line-profiles.js';
+import { ssoLineSchema } from './staff-line.js';
 
 export const profileSchema = z.object({
   sub: z.string().uuid(),
@@ -19,6 +21,7 @@ export const profileSchema = z.object({
   email: z.string().email().optional(),
   email_verified: z.literal(true).optional(),
   department: z.string().optional(),
+  line: ssoLineSchema.optional(),
 });
 export async function exchangeCusaGrant(
   config: Config,
@@ -79,6 +82,7 @@ export function registerSso(
         config.ssoClientId && config.ssoApiKey && config.lineLoginChannelId && config.ssoOrigin,
       ),
     demo: config.demo,
+    sameProvider: config.ssoLineSameProvider,
   }));
   app.post('/api/connect/start', async (request, reply) => {
     if (
@@ -90,29 +94,13 @@ export function registerSso(
     )
       throw new AppError(503, 'ยังไม่ได้เปิดการเชื่อมต่อ SSO จริง');
     const { idToken } = z.object({ idToken: z.string().min(20).max(8000) }).parse(request.body);
-    const verified = await fetcher('https://api.line.me/oauth2/v2.1/verify', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ id_token: idToken, client_id: config.lineLoginChannelId }),
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!verified.ok) throw new AppError(401, 'ยืนยันบัญชี LINE ไม่สำเร็จ');
-    const line = z
-      .object({
-        sub: z.string().regex(/^U[0-9a-f]{32}$/),
-        aud: z.string(),
-        exp: z.number(),
-        iss: z.literal('https://access.line.me'),
-      })
-      .parse(await verified.json());
-    if (line.aud !== config.lineLoginChannelId || line.exp <= Date.now() / 1000)
-      throw new AppError(401, 'LINE token ไม่ถูกต้องหรือหมดอายุ');
+    const lineId = await verifyLineIdentity(config, idToken, fetcher);
     const state = newToken(),
       verifier = newToken(),
       browser = newToken();
     await db.query(
       `INSERT INTO sso_transactions(state_hash,browser_hash,line_user_id,verifier,expires_at) VALUES($1,$2,$3,$4,now()+interval '10 minutes')`,
-      [tokenHash(state), tokenHash(browser), line.sub, encrypt(verifier, config.encryptionKey)],
+      [tokenHash(state), tokenHash(browser), lineId, encrypt(verifier, config.encryptionKey)],
     );
     reply.setCookie('cusa_link', browser, {
       path: CUSA_CALLBACK_PATH,
@@ -129,7 +117,7 @@ export function registerSso(
       state,
       code_challenge: createHash('sha256').update(verifier).digest('base64url'),
       code_challenge_method: 'S256',
-      scope: 'identity:read profile email',
+      scope: config.ssoClaimScopes,
     }).toString();
     return { url: url.toString() };
   });

@@ -16,7 +16,7 @@ import {
   uploadDocument,
 } from '../server/documents.js';
 import {
-  analyzeConversation,
+  analyzeConversation as realAnalyzeConversation,
   queueAnalysis,
   queueIdleAnalyses,
   draftFromGap,
@@ -24,6 +24,16 @@ import {
 import { encrypt } from '../server/security.js';
 import { revokeMessageData } from '../server/training.js';
 import { Worker } from '../server/worker.js';
+
+const analyzeConversation = (...args: Parameters<typeof realAnalyzeConversation>) =>
+  realAnalyzeConversation(
+    args[0],
+    args[1],
+    args[2],
+    args[3],
+    args[4],
+    async () => 'synthetic-access-token',
+  );
 
 let db: Database, app: FastifyInstance, config: Config, directory: string, cookie: string;
 before(async () => {
@@ -76,8 +86,8 @@ const aiConfig = () => ({
   ...config,
   demo: false,
   analyticsEnabled: true,
-  geminiKey: 'test-only',
-  geminiModel: 'test-model',
+  vertexProject: 'synthetic-project',
+  vertexModel: 'test-model',
 });
 const aiResult = () => ({
   intent: 'สอบถามวิธีใช้งาน',
@@ -224,6 +234,19 @@ test('multipart API enforces size and type without weakening image uploads; arch
 
 test('only missing knowledge creates gaps; conversion stays draft and withdrawal retracts all derived content', async () => {
   const { c, m } = await source('อยากทราบเรื่องจักรวาลพิเศษ สมาชิกสมมติ member@example.org');
+  await db.query(
+    "INSERT INTO settings(key,value) VALUES('ai_behavior',$1) ON CONFLICT(key) DO UPDATE SET value=$1",
+    [
+      JSON.stringify({
+        mode: 'knowledge_only',
+        tone: 'friendly',
+        language: 'auto',
+        length: 'short',
+        format: 'natural',
+        clarificationLimit: 2,
+      }),
+    ],
+  );
   const worker = new Worker(db, config);
   await worker.botReply(m.id);
   await worker.botReply(m.id);

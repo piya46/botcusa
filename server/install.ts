@@ -10,6 +10,10 @@ import { parseEnv } from 'node:util';
 import { parse as parseDotenv } from 'dotenv';
 import { z } from 'zod';
 import { installGroups } from '../shared/install.js';
+import { vertexSettings } from '../shared/vertex.js';
+import { readVertexCredentials } from './vertex-auth.js';
+import { cusaClaimScopes } from '../shared/sso.js';
+import { lineRecipientPattern } from '../shared/line.js';
 import { AppError } from './security.js';
 import { assertMysqlVersion, mysqlConnectionOptions } from './mysql.js';
 import { openDatabase } from './db.js';
@@ -53,6 +57,8 @@ const serviceKeys = new Set([
   'CUSA_SSO_ORIGIN',
   'CUSA_CLIENT_ID',
   'CUSA_API_KEY',
+  'CUSA_CLAIM_SCOPES',
+  'CUSA_LINE_SAME_PROVIDER',
 ]);
 const inputSchema = z
   .object({
@@ -149,10 +155,22 @@ function candidateEnv(root: string, value: unknown, inherited: NodeJS.ProcessEnv
     LINE_LOADING_ENABLED: 'true',
     LINE_LOADING_SECONDS: '30',
     AI_ANALYTICS_ENABLED: 'false',
+    GOOGLE_CLOUD_LOCATION: 'global',
+    VERTEX_AI_EMBEDDING_LOCATION: 'us-central1',
+    CUSA_CLAIM_SCOPES: 'identity:read profile email',
+    CUSA_LINE_SAME_PROVIDER: 'false',
     CHAT_RETENTION_DAYS: '180',
     DATASET_RETENTION_DAYS: '180',
   };
   for (const name of serviceKeys) env[name] = body.services[name] || prior[name] || env[name] || '';
+  try {
+    env.CUSA_CLAIM_SCOPES = cusaClaimScopes(
+      env.CUSA_CLAIM_SCOPES,
+      env.CUSA_LINE_SAME_PROVIDER === 'true',
+    );
+  } catch (error) {
+    throw new AppError(400, (error as Error).message);
+  }
   delete env.ADMIN_EMAIL;
   delete env.ADMIN_PASSWORD;
   const ssoOrigin = z.url().safeParse(env.CUSA_SSO_ORIGIN);
@@ -175,7 +193,7 @@ function candidateEnv(root: string, value: unknown, inherited: NodeJS.ProcessEnv
         409,
         `มี ${name} ใน Plesk Environment Variables ที่จะทับค่าใน .env กรุณาแก้ให้ตรงกันหรือนำค่าซ้ำออกก่อน`,
       );
-  for (const name of ['LINE_LOADING_ENABLED', 'AI_ANALYTICS_ENABLED'])
+  for (const name of ['LINE_LOADING_ENABLED', 'AI_ANALYTICS_ENABLED', 'CUSA_LINE_SAME_PROVIDER'])
     if (!['true', 'false'].includes(env[name]))
       throw new AppError(400, `${name} ต้องเป็น true หรือ false`);
   for (const name of ['CHAT_RETENTION_DAYS', 'DATASET_RETENTION_DAYS'])
@@ -185,10 +203,20 @@ function candidateEnv(root: string, value: unknown, inherited: NodeJS.ProcessEnv
   if (!Number.isInteger(seconds) || seconds < 5 || seconds > 60 || seconds % 5 !== 0)
     throw new AppError(400, 'Loading ต้องเป็น 5–60 วินาที เพิ่มทีละ 5');
   for (const name of ['LINE_AGENT_ALERT_USER_ID', 'LINE_SUPERVISOR_ALERT_USER_ID'])
-    if (env[name] && !/^U[0-9a-f]{32}$/.test(env[name]))
-      throw new AppError(400, `${name} ต้องเป็น LINE User ID`);
-  if (env.AI_ANALYTICS_ENABLED === 'true' && (!env.GEMINI_API_KEY || !env.GEMINI_MODEL))
-    throw new AppError(400, 'การวิเคราะห์ต้องมี Gemini key และ model');
+    if (env[name] && !lineRecipientPattern.test(env[name]))
+      throw new AppError(
+        400,
+        `${name} ต้องเป็น LINE User ID (U), Group ID (C) หรือ Room ID (R) ตามด้วยเลขฐานสิบหก 32 ตัว`,
+      );
+  try {
+    vertexSettings(env);
+    if (env.GOOGLE_APPLICATION_CREDENTIALS)
+      readVertexCredentials(env.GOOGLE_APPLICATION_CREDENTIALS, root);
+  } catch (error) {
+    throw new AppError(400, (error as Error).message);
+  }
+  if (env.AI_ANALYTICS_ENABLED === 'true' && (!env.GOOGLE_CLOUD_PROJECT || !env.VERTEX_AI_MODEL))
+    throw new AppError(400, 'การวิเคราะห์ต้องมี Google Cloud Project และ Vertex AI model');
   return env;
 }
 type DatabaseInspection = { version: string; tables: number };

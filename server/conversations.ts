@@ -3,8 +3,10 @@ import type { Agent } from '../shared/types.js';
 import { audit, enqueue, type Database, type Queryable, type Row } from './db.js';
 import type { Config } from './config.js';
 import { AppError, decrypt, encrypt, redact } from './security.js';
+import { verifiedStaffLine } from './staff-line.js';
+import { caseFlex } from './line-flex.js';
 
-export const conversationSelect = `SELECT c.*, u.name, u.department, u.cusa_sub, u.avatar_color,
+export const conversationSelect = `SELECT c.*, u.name, u.line_display_name, u.department, u.cusa_sub, u.avatar_color,
   a.name AS assigned_agent_name,t.name AS team_name,
   (SELECT redacted_text FROM messages m WHERE m.conversation_id=c.id AND NOT m.internal AND m.withdrawn_at IS NULL ORDER BY m.created_at DESC,m.sequence DESC LIMIT 1) AS last_message,
   (SELECT count(*)::int FROM messages m WHERE m.conversation_id=c.id) AS message_count,
@@ -53,12 +55,40 @@ export async function systemMessage(
     [conversationId, actorId ?? null, encrypt(text, config.encryptionKey), text],
   );
 }
-export async function claimCase(db: Database, config: Config, actor: Agent, id: string) {
+export async function claimCase(
+  db: Database,
+  config: Config,
+  actor: Agent,
+  id: string,
+  options: {
+    expectedVersion?: number;
+    lineEvent?: { id: string; replyToken?: string; sourceUserId: string };
+  } = {},
+) {
   if (actor.role === 'REVIEWER') throw new AppError(403, 'บัญชีผู้ตรวจทานไม่สามารถรับงานได้');
   return db.transaction(async (tx) => {
-    const [current] = await tx.query(`SELECT team_id FROM conversations WHERE id=$1 FOR UPDATE`, [
-      id,
-    ]);
+    const [current] = await tx.query(
+      `SELECT team_id,routing_version FROM conversations WHERE id=$1 FOR UPDATE`,
+      [id],
+    );
+    if (options.lineEvent) {
+      const [done] = await tx.query('SELECT id FROM line_claim_events WHERE id=$1', [
+        options.lineEvent.id,
+      ]);
+      if (done) return current;
+    }
+    if (
+      options.expectedVersion !== undefined &&
+      current?.routing_version !== options.expectedVersion
+    )
+      throw new AppError(409, 'เคสนี้ถูกส่งต่อแล้ว กรุณาเปิดรายการล่าสุด');
+    const [staff] = await tx.query('SELECT * FROM agents WHERE id=$1 FOR SHARE', [actor.id]);
+    if (
+      !staff?.active ||
+      staff.role !== actor.role ||
+      (options.lineEvent && verifiedStaffLine(config, staff) !== options.lineEvent.sourceUserId)
+    )
+      throw new AppError(403, 'สิทธิ์หรือบัญชี LINE เปลี่ยนแล้ว กรุณาเข้าสู่ระบบใหม่');
     if (current?.team_id)
       await tx.query(`SELECT id FROM teams WHERE id=$1 FOR SHARE`, [current.team_id]);
     const [c] = await tx.query(
@@ -77,6 +107,59 @@ export async function claimCase(db: Database, config: Config, actor: Agent, id: 
       [id, actor.id, c.routing_version],
     );
     await systemMessage(tx, config, id, `${actor.name} รับเรื่องแล้ว`, actor.id);
+    const text =
+      'ขณะนี้มีเจ้าหน้าที่รับเรื่องแล้ว กรุณารอสักครู่ เจ้าหน้าที่กำลังตรวจสอบข้อมูลให้ค่ะ';
+    const [message] = await tx.query(
+      `INSERT INTO messages(conversation_id,sender_type,agent_id,encrypted_text,redacted_text,delivery_status,internal,metadata)
+      VALUES($1,'SYSTEM',$2,$3,$4,'QUEUED',false,$5) RETURNING id`,
+      [
+        id,
+        actor.id,
+        encrypt(text, config.encryptionKey),
+        text,
+        JSON.stringify({ system_event: 'CASE_CLAIMED', routing_version: c.routing_version }),
+      ],
+    );
+    await enqueue(tx, 'DELIVERY', { messageId: message.id }, `delivery:${message.id}`);
+    const recipient = verifiedStaffLine(config, staff);
+    if (recipient && staff.line_alerts_enabled) {
+      const payload = {
+        to: recipient,
+        messages: [
+          caseFlex(config, {
+            id,
+            number: c.number,
+            version: c.routing_version,
+            recipient,
+            accepted: true,
+          }),
+        ],
+      };
+      await enqueue(
+        tx,
+        'STAFF_CLAIM_ALERT',
+        {
+          agentId: actor.id,
+          encryptedPayload: encrypt(JSON.stringify(payload), config.encryptionKey),
+        },
+        `staff-claim:${id}:${c.routing_version}`,
+      );
+    }
+    if (options.lineEvent) {
+      const payload = {
+        replyToken: options.lineEvent.replyToken,
+        messages: [
+          {
+            type: 'text',
+            text: `รับเคส #${String(c.number).padStart(4, '0')} แล้ว\n${config.origin}/admin/inbox?case=${id}`,
+          },
+        ],
+      };
+      await tx.query(
+        'INSERT INTO line_claim_events(id,conversation_id,encrypted_response) VALUES($1,$2,$3)',
+        [options.lineEvent.id, id, encrypt(JSON.stringify(payload), config.encryptionKey)],
+      );
+    }
     await audit(tx, actor.id, 'CASE_CLAIMED', 'conversation', id);
     return c;
   });

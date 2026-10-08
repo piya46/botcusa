@@ -77,6 +77,8 @@ export function registerSsoCallback(
       secure: true,
       sameSite: 'lax',
     });
+    if (input.data.error === 'invalid_scope')
+      return reply.redirect(flow === 'staff' ? '/admin?auth=scope' : '/connect?result=scope');
     if (input.data.error !== undefined || !input.data.code)
       return reply.redirect(flows[flow].invalid);
     return handlers[flow](request, reply, transaction, input.data.code);

@@ -42,9 +42,13 @@ const initial: InstallInput = {
     LINE_LOADING_ENABLED: 'true',
     LINE_LOADING_SECONDS: '30',
     AI_ANALYTICS_ENABLED: 'false',
+    GOOGLE_CLOUD_LOCATION: 'global',
+    VERTEX_AI_EMBEDDING_LOCATION: 'us-central1',
     CHAT_RETENTION_DAYS: '180',
     DATASET_RETENTION_DAYS: '180',
     CUSA_SSO_ORIGIN: 'https://sso.reunion.scicu-alumni.com',
+    CUSA_CLAIM_SCOPES: 'identity:read profile email',
+    CUSA_LINE_SAME_PROVIDER: 'false',
   },
 };
 const steps = ['เว็บและ SSO', 'ฐานข้อมูล', 'บริการเสริม', 'ติดตั้ง'];
@@ -220,7 +224,7 @@ export function Install() {
                       [
                         'โดเมนและการเข้าสู่ระบบ',
                         'MySQL / MariaDB จาก Plesk',
-                        'LINE · Gemini',
+                        'LINE · Vertex AI',
                         'ตรวจสอบและสร้างระบบ',
                       ][index]
                     }
@@ -343,6 +347,11 @@ export function Install() {
                       />
                     </Field>
                     {[
+                      [
+                        'CUSA_CLAIM_SCOPES',
+                        'ข้อมูลที่ขอจาก SSO',
+                        'identity:read profile email; เพิ่ม line หากบังคับ LINE UID และเปิดอนุญาตใน Consent แล้ว',
+                      ],
                       ['CUSA_SSO_ORIGIN', 'SSO Origin', 'URL ของ CUSA SSO ไม่มี /login ต่อท้าย'],
                       [
                         'CUSA_CLIENT_ID',
@@ -364,7 +373,13 @@ export function Install() {
                           onChange={(e) => {
                             setForm((f) => ({
                               ...f,
-                              services: { ...f.services, [key]: e.target.value.trim() },
+                              services: {
+                                ...f.services,
+                                [key]:
+                                  key === 'CUSA_CLAIM_SCOPES'
+                                    ? e.target.value
+                                    : e.target.value.trim(),
+                              },
                             }));
                             setConfirmed(false);
                           }}
@@ -372,6 +387,24 @@ export function Install() {
                       </Field>
                     ))}
                   </div>
+                  <Field
+                    label="LINE ของ SSO กับ OA อยู่ Provider เดียวกัน"
+                    hint="เปิดเมื่อยืนยัน Provider แล้ว ระบบจะขอ line และผูก LINE เจ้าหน้าที่จาก SSO อัตโนมัติ"
+                  >
+                    <select
+                      value={form.services.CUSA_LINE_SAME_PROVIDER}
+                      onChange={(e) => {
+                        setForm((f) => ({
+                          ...f,
+                          services: { ...f.services, CUSA_LINE_SAME_PROVIDER: e.target.value },
+                        }));
+                        setConfirmed(false);
+                      }}
+                    >
+                      <option value="false">คนละ Provider / ยังไม่ยืนยัน</option>
+                      <option value="true">Provider เดียวกัน</option>
+                    </select>
+                  </Field>
                   <div className="install-tip">
                     <strong>ให้ CUSA สร้างบทบาทของแอปตามชื่อนี้</strong>
                     {staffRoles.map((r) => (
@@ -597,7 +630,9 @@ export function Install() {
                       <dd>
                         {[
                           form.services.LINE_CHANNEL_ACCESS_TOKEN && 'LINE',
-                          form.services.GEMINI_API_KEY && 'Gemini',
+                          form.services.GOOGLE_CLOUD_PROJECT &&
+                            form.services.VERTEX_AI_MODEL &&
+                            'Vertex AI',
                         ]
                           .filter(Boolean)
                           .join(' · ') || 'เติมภายหลัง'}

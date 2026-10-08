@@ -2,7 +2,7 @@ import mysql, { type PoolConnection, type RowDataPacket } from 'mysql2/promise';
 import { randomUUID, createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import type { Database, Queryable, Row } from './db.js';
-import { mysqlSchema, mysqlUuidTables } from './mysql-schema.js';
+import { mysqlSchema, mysqlUuidTables, mysqlAddColumns } from './mysql-schema.js';
 
 // This adapter implements the application's SQL subset, not arbitrary PostgreSQL SQL.
 // Values always use prepared parameters. RETURNING and conflict handling run on one transaction.
@@ -464,6 +464,16 @@ export async function openMysql(options: {
         if (Number(locks[0].acquired) !== 1) throw new Error('Database migration already running');
         try {
           for (const statement of mysqlSchema) await connection.query(statement);
+          for (const [table, column, definition] of mysqlAddColumns) {
+            const [columns] = await connection.execute<RowDataPacket[]>(
+              'SELECT COLUMN_NAME FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name=? AND column_name=?',
+              [table, column],
+            );
+            if (!columns.length)
+              await connection.query(
+                `ALTER TABLE ${identifier(table)} ADD COLUMN ${identifier(column)} ${definition}`,
+              );
+          }
           await connection.query(
             'INSERT INTO schema_migrations(version) VALUES(1) ON DUPLICATE KEY UPDATE version=version',
           );

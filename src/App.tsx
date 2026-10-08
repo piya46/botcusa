@@ -204,6 +204,12 @@ export default function App() {
           ))}
         </nav>
         <div className="sidebar-bottom">
+          {session.agent.role !== 'REVIEWER' && (
+            <a className="nav-item" href="/connect/staff" target="_blank" rel="noopener">
+              <Bell size={19} />
+              <span>เชื่อม LINE รับเคส</span>
+            </a>
+          )}
           {session.agent.role === 'ADMIN' && (
             <a
               className={`nav-item ${current === 'settings' ? 'active' : ''}`}
@@ -405,11 +411,13 @@ function Login({ warning }: { warning?: string }) {
   const [busy, setBusy] = useState(false),
     [error, setError] = useState(() => {
       const reason = new URLSearchParams(location.search).get('auth');
-      return reason === 'conflict'
-        ? 'บัญชีอีเมลนี้มีอยู่แล้ว ติดต่อผู้ดูแลเพื่อย้ายบัญชีเดิม'
-        : reason
-          ? 'เข้าสู่ระบบไม่สำเร็จ ตรวจบทบาทของแอปกับผู้ดูแล CUSA แล้วลองใหม่'
-          : '';
+      return reason === 'scope'
+        ? 'CUSA ไม่อนุญาต scope ที่แอปขอ ให้ผู้ดูแลตรวจ Allowed scopes และ CUSA_CLAIM_SCOPES'
+        : reason === 'conflict'
+          ? 'บัญชีอีเมลนี้มีอยู่แล้ว ติดต่อผู้ดูแลเพื่อย้ายบัญชีเดิม'
+          : reason
+            ? 'เข้าสู่ระบบไม่สำเร็จ ตรวจบทบาทของแอปกับผู้ดูแล CUSA แล้วลองใหม่'
+            : '';
     });
   return (
     <div className="login-page">
@@ -447,7 +455,9 @@ function Login({ warning }: { warning?: string }) {
             setBusy(true);
             setError('');
             try {
-              const result = await post<{ url: string }>('/auth/sso/start');
+              const result = await post<{ url: string }>('/auth/sso/start', {
+                returnTo: location.pathname + location.search,
+              });
               location.assign(result.url);
             } catch (e) {
               setError((e as Error).message);

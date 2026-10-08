@@ -10,3 +10,6 @@ playwright-report/
 test-results/
 *.log
 .DS_Store
+
+.secrets/
+*service-account*.json

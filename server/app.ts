@@ -50,6 +50,10 @@ import { operationalStats } from './stats.js';
 import { listTeams, saveTeam, transferCase, transferHistory } from './tickets.js';
 import { registerKnowledgeRoutes } from './knowledge-routes.js';
 import { configureAgentLine } from './line-notifications.js';
+import { lineRecipientType } from '../shared/line.js';
+import { aiBehaviorSchema, loadAiBehavior } from './ai-behavior.js';
+import { vertexConfigured } from './vertex-auth.js';
+import { queueLineProfile } from './line-profiles.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -260,11 +264,15 @@ export async function buildApp(
       [q.status, q.search, `%${q.search}%`, q.mine === 'true' ? actor(request).id : null],
     );
   });
-  app.get('/api/conversations/:id', async (request) => ({
-    conversation: await getConversation(db, pathId(request)),
-    messages: await getMessages(db, config, pathId(request)),
-    transfers: await transferHistory(db, config, pathId(request)),
-  }));
+  app.get('/api/conversations/:id', async (request) => {
+    const conversation = await getConversation(db, pathId(request));
+    await queueLineProfile(db, config, conversation.user_id);
+    return {
+      conversation,
+      messages: await getMessages(db, config, pathId(request)),
+      transfers: await transferHistory(db, config, pathId(request)),
+    };
+  });
   app.post('/api/conversations/:id/transfer', async (request) => {
     const input = z
       .object({
@@ -320,7 +328,7 @@ export async function buildApp(
   app.get('/api/agents', async (request) => {
     admin(request);
     return db.query(
-      `SELECT id,name,role,active,line_user_id,line_alerts_enabled FROM agents ORDER BY name`,
+      `SELECT id,name,role,active,line_user_id,line_alerts_enabled,line_identity_source FROM agents ORDER BY name`,
     );
   });
   app.patch('/api/agents/:id/line-notifications', async (request) => {
@@ -342,6 +350,28 @@ export async function buildApp(
     return db.query(
       `SELECT n.id,n.title,n.conversation_id,n.line_status,n.line_error,n.line_sent_at,n.created_at,a.name AS agent_name FROM notifications n JOIN agents a ON a.id=n.agent_id ORDER BY n.created_at DESC LIMIT 50`,
     );
+  });
+  app.get('/api/line-alerts', async (request) => {
+    admin(request);
+    const recipient = (id: string) => ({
+      id,
+      type: lineRecipientType(id),
+      configured: Boolean(id && config.lineToken),
+    });
+    return {
+      demo: config.demo,
+      tokenConfigured: Boolean(config.lineToken),
+      agent: recipient(config.agentAlertId),
+      supervisor: recipient(config.supervisorAlertId),
+      chats: await db.query(
+        'SELECT id,type,active,last_event_at FROM line_chats ORDER BY last_event_at DESC LIMIT 50',
+      ),
+      jobs: await db.query(`SELECT j.id,j.status,j.last_error,j.attempts,j.created_at,j.completed_at,c.id AS conversation_id,c.number,
+        j.payload->>'supervisor' AS supervisor,
+        EXISTS(SELECT 1 FROM audit_logs a WHERE a.entity_id=c.id::text AND a.action IN ('AGENT_ALERT_ACCEPTED','SUPERVISOR_ALERT_ACCEPTED') AND a.details->>'jobId'=j.id::text) AS accepted
+        FROM jobs j LEFT JOIN conversations c ON c.id::text=j.payload->>'conversationId'
+        WHERE j.kind='ALERT' ORDER BY j.created_at DESC LIMIT 20`),
+    };
   });
   app.get('/api/notifications', async (request) => {
     const id = actor(request).id;
@@ -713,7 +743,7 @@ export async function buildApp(
       id = pathId(request);
     return db.transaction(async (tx) => {
       await tx.query(
-        `UPDATE users SET cusa_sub=NULL,email=NULL,department=NULL,roles='[]',linked_at=NULL,updated_at=now() WHERE id=$1`,
+        `UPDATE users SET cusa_sub=NULL,email=NULL,department=NULL,roles='[]',linked_at=NULL,name=COALESCE(line_display_name,'ผู้ติดต่อ LINE'),updated_at=now() WHERE id=$1`,
         [id],
       );
       await queueRichMenu(tx, id, config.guestMenuId || null);
@@ -841,7 +871,8 @@ export async function buildApp(
       datasetRetentionDays: config.datasetRetentionDays,
       failedJobs,
       workerMode: config.workerMode,
-      supervisorAlertsConfigured: config.demo || Boolean(config.supervisorAlertId),
+      supervisorAlertsConfigured:
+        config.demo || Boolean(config.supervisorAlertId && config.lineToken),
       agentAlertsConfigured: config.demo || Boolean(config.agentAlertId && config.lineToken),
       lineLoading: { enabled: config.lineLoadingEnabled, seconds: config.lineLoadingSeconds },
       integrations: {
@@ -851,7 +882,8 @@ export async function buildApp(
           Boolean(
             config.ssoClientId && config.ssoApiKey && config.lineLoginChannelId && config.liffId,
           ),
-        gemini: !config.demo && Boolean(config.geminiKey && config.geminiModel),
+        vertex: vertexConfigured(config),
+        aiModel: config.vertexModel,
         database:
           db.dialect === 'mysql'
             ? 'MySQL / MariaDB'
@@ -859,7 +891,10 @@ export async function buildApp(
               ? 'PostgreSQL'
               : 'Embedded PostgreSQL',
       },
-      settings: Object.fromEntries(settings.map((s) => [s.key, s.value])),
+      settings: {
+        ...Object.fromEntries(settings.map((s) => [s.key, s.value])),
+        ai_behavior: await loadAiBehavior(db),
+      },
     };
   });
   app.patch('/api/settings', async (request) => {
@@ -867,6 +902,7 @@ export async function buildApp(
       b = z
         .object({
           system_prompt: z.string().trim().min(30).max(8000),
+          ai_behavior: aiBehaviorSchema.optional(),
           training_policy: z.object({
             enabled: z.boolean(),
             notice_version: z.string().max(100),
@@ -878,10 +914,10 @@ export async function buildApp(
       throw new AppError(400, 'ระบุเวอร์ชันประกาศการใช้ข้อมูลก่อนเปิดใช้งาน');
     await db.transaction(async (tx) => {
       for (const [key, value] of Object.entries(b))
-        await tx.query(`UPDATE settings SET value=$2,updated_at=now() WHERE key=$1`, [
-          key,
-          JSON.stringify(value),
-        ]);
+        await tx.query(
+          `INSERT INTO settings(key,value) VALUES($1,$2) ON CONFLICT(key) DO UPDATE SET value=$2,updated_at=now()`,
+          [key, JSON.stringify(value)],
+        );
       await audit(tx, a.id, 'SETTINGS_UPDATED', 'settings');
     });
     return { ok: true };

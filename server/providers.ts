@@ -1,4 +1,5 @@
 import type { Config } from './config.js';
+import { vertexAccessToken, vertexConfigured, type VertexTokenProvider } from './vertex-auth.js';
 import { AppError } from './security.js';
 
 export type Fetcher = typeof fetch;
@@ -72,20 +73,23 @@ export async function showLineLoading(config: Config, chatId: string, fetcher: F
     return 'FAILED';
   }
 }
-export async function gemini(
+export async function generateText(
   config: Config,
   prompt: string,
   system: string,
   fetcher: Fetcher = fetch,
   jsonSchema?: Record<string, unknown>,
+  tokenProvider: VertexTokenProvider = vertexAccessToken,
 ): Promise<string> {
-  if (config.demo || !config.geminiKey || !config.geminiModel)
-    throw new AppError(503, 'ยังไม่ได้เชื่อมต่อโมเดล AI');
+  if (!vertexConfigured(config)) throw new AppError(503, 'ยังไม่ได้เชื่อมต่อโมเดล AI');
   const response = await fetcher(
-    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(config.geminiModel)}:generateContent`,
+    vertexUrl(config, config.vertexModel, config.vertexLocation, 'generateContent'),
     {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': config.geminiKey },
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${await tokenProvider(config)}`,
+      },
       signal: AbortSignal.timeout(15_000),
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: system }] },
@@ -94,20 +98,33 @@ export async function gemini(
           temperature: 0.2,
           maxOutputTokens: jsonSchema ? 4000 : 800,
           ...(jsonSchema
-            ? { responseMimeType: 'application/json', responseJsonSchema: jsonSchema }
+            ? {
+                responseMimeType: 'application/json',
+                responseSchema: vertexResponseSchema(jsonSchema),
+              }
             : {}),
         },
       }),
     },
   );
-  if (!response.ok) throw new AppError(503, 'โมเดล AI ไม่พร้อมใช้งาน');
+  if (!response.ok)
+    throw new AppError(
+      503,
+      `Vertex AI ตอบ HTTP ${response.status} ตรวจโมเดล location สิทธิ์ และโควตา`,
+    );
   const data = (await response.json()) as {
-    candidates?: { finishReason?: string; content?: { parts?: { text?: string }[] } }[];
+    candidates?: {
+      finishReason?: string;
+      content?: { parts?: { text?: string; thought?: boolean }[] };
+    }[];
   };
   const text = data.candidates?.[0]?.content?.parts
-    ?.map((p) => p.text ?? '')
+    ?.filter((p) => !p.thought)
+    .map((p) => p.text ?? '')
     .join('')
     .trim();
+  if (data.candidates?.[0]?.finishReason && data.candidates[0].finishReason !== 'STOP')
+    throw new AppError(503, 'โมเดลไม่ส่งคำตอบที่สมบูรณ์');
   if (!text) throw new AppError(503, 'โมเดลไม่ส่งคำตอบกลับมา');
   if (jsonSchema) {
     if (data.candidates?.[0]?.finishReason !== 'STOP' || text.length > 20000)
@@ -120,25 +137,62 @@ export async function embed(
   config: Config,
   text: string,
   fetcher: Fetcher = fetch,
+  task: 'RETRIEVAL_QUERY' | 'RETRIEVAL_DOCUMENT' = 'RETRIEVAL_QUERY',
+  tokenProvider: VertexTokenProvider = vertexAccessToken,
 ): Promise<number[] | null> {
-  if (config.demo || !config.geminiKey || !config.embeddingModel) return null;
+  if (config.demo || !config.vertexProject || !config.embeddingModel) return null;
   const response = await fetcher(
-    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(config.embeddingModel)}:embedContent`,
+    vertexUrl(config, config.embeddingModel, config.vertexEmbeddingLocation, 'predict'),
     {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': config.geminiKey },
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${await tokenProvider(config)}`,
+      },
       signal: AbortSignal.timeout(10_000),
       body: JSON.stringify({
-        model: `models/${config.embeddingModel}`,
-        content: { parts: [{ text }] },
-        outputDimensionality: 768,
+        instances: [{ content: text, task_type: task }],
+        parameters: { outputDimensionality: 768, autoTruncate: true },
       }),
     },
   );
   if (!response.ok) throw new AppError(503, 'สร้าง embedding ไม่สำเร็จ');
-  const data = (await response.json()) as { embedding?: { values?: number[] } };
-  const values = data.embedding?.values;
+  const data = (await response.json()) as {
+    predictions?: { embeddings?: { values?: number[] } }[];
+  };
+  const values = data.predictions?.[0]?.embeddings?.values;
   if (!values || values.length !== 768 || values.some((v) => !Number.isFinite(v)))
     throw new AppError(503, 'รูปแบบ embedding ไม่ถูกต้อง');
   return values;
+}
+
+export function vertexUrl(config: Config, model: string, location: string, method: string) {
+  const host =
+    location === 'global' ? 'aiplatform.googleapis.com' : `${location}-aiplatform.googleapis.com`;
+  return `https://${host}/v1/projects/${encodeURIComponent(config.vertexProject)}/locations/${encodeURIComponent(location)}/publishers/google/models/${encodeURIComponent(model)}:${method}`;
+}
+// Vertex responseSchema is a subset of JSON Schema; keep strict validation on our server too.
+function vertexResponseSchema(schema: Record<string, any>): Record<string, any> {
+  const result: Record<string, any> = {};
+  for (const key of [
+    'type',
+    'description',
+    'enum',
+    'required',
+    'minItems',
+    'maxItems',
+    'minimum',
+    'maximum',
+  ])
+    if (schema[key] !== undefined)
+      result[key] = key === 'type' ? String(schema[key]).toUpperCase() : schema[key];
+  if (schema.properties)
+    result.properties = Object.fromEntries(
+      Object.entries(schema.properties).map(([key, value]) => [
+        key,
+        vertexResponseSchema(value as Record<string, any>),
+      ]),
+    );
+  if (schema.items) result.items = vertexResponseSchema(schema.items);
+  return result;
 }

@@ -3,6 +3,8 @@ import type { Config } from './config.js';
 import { audit, enqueue, type Database, type Queryable } from './db.js';
 import { AppError, decrypt, encrypt } from './security.js';
 import { lineRequest, type Fetcher } from './providers.js';
+import { verifiedStaffLine } from './staff-line.js';
+import { caseFlex } from './line-flex.js';
 
 export async function configureAgentLine(
   db: Database,
@@ -17,6 +19,8 @@ export async function configureAgentLine(
     const [a] = await tx.query(`SELECT * FROM agents WHERE id=$1 FOR UPDATE`, [id]);
     if (!a || !a.active || a.role === 'REVIEWER')
       throw new AppError(400, 'เลือกเจ้าหน้าที่ที่รับเคสและใช้งานอยู่');
+    if (a.line_identity_source && input.userId !== a.line_user_id)
+      throw new AppError(400, 'บัญชีนี้ยืนยัน LINE แล้ว ให้เจ้าหน้าที่เชื่อมบัญชีใหม่ผ่าน LINE');
     if (a.line_user_id !== input.userId || a.line_alerts_enabled !== input.enabled) {
       await tx.query(`UPDATE agents SET line_user_id=$2,line_alerts_enabled=$3 WHERE id=$1`, [
         id,
@@ -46,24 +50,29 @@ export async function queueTransferLine(
   conversationId: string,
 ) {
   // Configuration updates and delivery use this same lock before touching the notification.
-  const [agent] = await tx.query(
-    `SELECT line_user_id,line_alerts_enabled,active FROM agents WHERE id=$1 FOR SHARE`,
-    [agentId],
-  );
+  const [agent] = await tx.query(`SELECT * FROM agents WHERE id=$1 FOR SHARE`, [agentId]);
   if (
     !agent?.active ||
     !agent.line_alerts_enabled ||
     !agent.line_user_id ||
+    (agent.line_identity_source && !verifiedStaffLine(config, agent)) ||
     (!config.demo && !config.lineToken)
   )
     return;
+  const [conversation] = await tx.query(
+    'SELECT number,routing_version FROM conversations WHERE id=$1',
+    [conversationId],
+  );
   const payload = {
     to: agent.line_user_id,
     messages: [
-      {
-        type: 'text',
-        text: `${title}\nมีงานส่งต่อรอรับ กรุณาเปิดเคสเพื่อดูรายละเอียด\n${config.origin}/admin/inbox?case=${conversationId}`,
-      },
+      caseFlex(config, {
+        id: conversationId,
+        number: conversation.number,
+        version: conversation.routing_version,
+        recipient: agent.line_user_id,
+        title: 'มีเคสส่งต่อถึงคุณ',
+      }),
     ],
   };
   await tx.query(`UPDATE notifications SET line_status='PENDING',line_payload=$2 WHERE id=$1`, [
@@ -112,6 +121,7 @@ export async function deliverTransferLine(
       a.role === 'REVIEWER' ||
       !a.line_alerts_enabled ||
       !payload ||
+      (a.line_identity_source && !verifiedStaffLine(config, a)) ||
       a.line_user_id !== payload.to
     ) {
       await tx.query(

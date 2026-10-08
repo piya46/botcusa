@@ -1,3 +1,4 @@
+import { aiBehaviorOptions, defaultAiBehavior, type AiBehavior } from '../../shared/ai';
 import { useEffect, useState } from 'react';
 import {
   ArrowRight,
@@ -31,6 +32,7 @@ import { Avatar, Empty, ErrorBox, Loading, Modal, PageTitle, useResource } from 
 import { MemberActions, menuStatus } from './MemberActions';
 import { KnowledgeDocuments } from './KnowledgeDocuments';
 import { LineNotificationsSettings } from './LineNotifications';
+import { LineAlertsSettings } from './LineAlerts';
 import {
   AudienceFields,
   AudienceSummary,
@@ -775,6 +777,7 @@ export function BroadcastPage({ agent, demo }: { agent: Agent; demo: boolean }) 
 export function SettingsPage() {
   const { data, error, loading, reload } = useResource<any>('/settings'),
     audit = useResource<any[]>('/audit');
+  const [behavior, setBehavior] = useState<AiBehavior>({ ...defaultAiBehavior });
   const [prompt, setPrompt] = useState(''),
     [enabled, setEnabled] = useState(false),
     [notice, setNotice] = useState(''),
@@ -789,6 +792,7 @@ export function SettingsPage() {
   useEffect(() => {
     if (data) {
       setPrompt(data.settings.system_prompt);
+      setBehavior(data.settings.ai_behavior ?? { ...defaultAiBehavior });
       setEnabled(data.settings.training_policy.enabled);
       setNotice(data.settings.training_policy.notice_version);
       setPurpose(data.settings.training_policy.purpose);
@@ -821,6 +825,7 @@ export function SettingsPage() {
             try {
               await patch('/settings', {
                 system_prompt: prompt,
+                ai_behavior: behavior,
                 training_policy: { enabled, notice_version: notice, purpose },
               });
               notify('บันทึกการตั้งค่าแล้ว');
@@ -859,7 +864,10 @@ export function SettingsPage() {
       >
         <div>
           {settingsTab === 'connections' && (
-            <LineNotificationsSettings demo={data.demo} loading={data.lineLoading} />
+            <>
+              <LineAlertsSettings />
+              <LineNotificationsSettings demo={data.demo} loading={data.lineLoading} />
+            </>
           )}
           <section className="panel settings-panel" hidden={settingsTab !== 'ai'}>
             <div className="panel-heading">
@@ -871,6 +879,42 @@ export function SettingsPage() {
                 <p>กำหนดบทบาท ภาษา และขอบเขตข้อมูล</p>
               </div>
             </div>
+            <div className="ai-behavior-grid">
+              {Object.entries(aiBehaviorOptions).map(([key, field]) => (
+                <label key={key}>
+                  {field.label}
+                  <select
+                    value={behavior[key as keyof AiBehavior]}
+                    onChange={(e) => setBehavior((b) => ({ ...b, [key]: e.target.value }))}
+                  >
+                    {Object.entries(field.options).map(([value, label]) => (
+                      <option key={value} value={value}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ))}
+              <label>
+                ถามรายละเอียดเพิ่มได้
+                <select
+                  value={behavior.clarificationLimit}
+                  disabled={behavior.mode === 'knowledge_only'}
+                  onChange={(e) =>
+                    setBehavior((b) => ({ ...b, clarificationLimit: Number(e.target.value) }))
+                  }
+                >
+                  {[1, 2, 3].map((n) => (
+                    <option value={n} key={n}>
+                      {n} ครั้ง ก่อนส่งต่อ
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <p className="muted small-text">
+              มีผลกับข้อความถัดไป · Vertex AI {data.integrations.aiModel || '(ยังไม่ตั้งโมเดล)'}
+            </p>
             <label className="sr-only" htmlFor="system-prompt">
               System prompt
             </label>
@@ -883,7 +927,7 @@ export function SettingsPage() {
             />
             <div className="form-info">
               <BookOpen size={16} />
-              ใช้ความรู้ที่อนุมัติแล้ว · ไม่พบคำตอบจะส่งต่อเจ้าหน้าที่
+              ข้อมูลสมาคมใช้หลักฐานที่อนุมัติแล้ว · เรื่องที่ต้องตรวจสอบส่งต่อเจ้าหน้าที่
             </div>
           </section>
           <section className="panel settings-panel" hidden={settingsTab !== 'ai'}>
@@ -951,7 +995,7 @@ export function SettingsPage() {
             {[
               ['LINE Messaging API', data.integrations.line],
               ['CUSA SSO · v1.5.0', data.integrations.sso],
-              ['Gemini', data.integrations.gemini],
+              ['Vertex AI', data.integrations.vertex],
               ['แจ้งเตือน Supervisor', data.supervisorAlertsConfigured],
               ['แจ้งเตือนเคสใหม่ส่วนกลาง', data.agentAlertsConfigured],
             ].map(([name, connected]) => (

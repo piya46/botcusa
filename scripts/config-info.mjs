@@ -11,13 +11,9 @@ if (!['models', 'rich-menus'].includes(action)) {
 } else {
   try {
     if (existsSync(resolve(root, '.env'))) process.loadEnvFile(resolve(root, '.env'));
-    const key = process.env[action === 'models' ? 'GEMINI_API_KEY' : 'LINE_CHANNEL_ACCESS_TOKEN'];
-    if (!key)
-      throw new Error(
-        action === 'models'
-          ? 'กรอก GEMINI_API_KEY ใน .env ก่อน'
-          : 'กรอก LINE_CHANNEL_ACCESS_TOKEN ใน .env ก่อน',
-      );
+    const key = process.env.LINE_CHANNEL_ACCESS_TOKEN;
+    if (action === 'rich-menus' && !key)
+      throw new Error('กรอก LINE_CHANNEL_ACCESS_TOKEN ใน .env ก่อน');
     if (action === 'rich-menus') {
       const response = await fetch('https://api.line.me/v2/bot/richmenu/list', {
         headers: { Authorization: `Bearer ${key}` },
@@ -29,35 +25,21 @@ if (!['models', 'rich-menus'].includes(action)) {
         (data.richmenus ?? []).map((menu) => ({ name: menu.name, id: menu.richMenuId })),
       );
     } else {
-      let next = '',
-        pages = 0;
-      do {
-        const url = new URL('https://generativelanguage.googleapis.com/v1beta/models');
-        url.searchParams.set('pageSize', '1000');
-        if (next) url.searchParams.set('pageToken', next);
-        const response = await fetch(url, {
-          headers: { 'x-goog-api-key': key },
-          signal: AbortSignal.timeout(10000),
-        });
-        if (!response.ok)
-          throw new Error(`Gemini ตอบ HTTP ${response.status}; ตรวจ API key, สิทธิ์ และโควตา`);
-        const data = await response.json();
-        console.table(
-          (data.models ?? [])
-            .filter((model) =>
-              (model.supportedGenerationMethods ?? []).some((method) =>
-                ['generateContent', 'embedContent'].includes(method),
-              ),
-            )
-            .map((model) => ({
-              id: model.name.replace(/^models\//, ''),
-              methods: (model.supportedGenerationMethods ?? []).join(', '),
-            })),
-        );
-        next = data.nextPageToken ?? '';
-        if (++pages >= 20 && next)
-          throw new Error('รายการโมเดลเกินขอบเขต โปรดตรวจใน Google AI Studio');
-      } while (next);
+      console.table([
+        {
+          purpose: 'ตอบคำถาม / วิเคราะห์',
+          model: process.env.VERTEX_AI_MODEL || '(ยังไม่ตั้ง)',
+          location: process.env.GOOGLE_CLOUD_LOCATION || 'global',
+        },
+        {
+          purpose: 'ค้นหาความหมาย',
+          model: process.env.VERTEX_AI_EMBEDDING_MODEL || '(ใช้คำสำคัญ)',
+          location: process.env.VERTEX_AI_EMBEDDING_LOCATION || 'us-central1',
+        },
+      ]);
+      console.log('ค่าที่ตั้งไว้ ไม่ใช่ผลตรวจสิทธิ์หรือรายชื่อโมเดลในบัญชี');
+      console.log('เลือกโมเดลใน Google Cloud → Vertex AI → Model Garden');
+      console.log('https://docs.cloud.google.com/vertex-ai/generative-ai/docs/learn/locations');
     }
   } catch (error) {
     console.error(error instanceof Error ? error.message : 'อ่านรายการไม่สำเร็จ');

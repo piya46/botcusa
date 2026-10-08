@@ -233,4 +233,23 @@ CREATE TABLE IF NOT EXISTS staff_sso_refresh (
   rotation_id UUID, rotation_started_at TIMESTAMPTZ
 );
 INSERT INTO schema_migrations(version) VALUES(7) ON CONFLICT DO NOTHING;
+CREATE TABLE IF NOT EXISTS line_chats (
+  id TEXT PRIMARY KEY, type TEXT NOT NULL CHECK(type IN ('group','room')),
+  active BOOLEAN NOT NULL, last_event_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+INSERT INTO schema_migrations(version) VALUES(8) ON CONFLICT DO NOTHING;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS line_display_name TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS line_profile_checked_at TIMESTAMPTZ;
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS line_identity_source TEXT;
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS line_login_channel_id TEXT;
+ALTER TABLE staff_sso_transactions ADD COLUMN IF NOT EXISTS line_user_id TEXT;
+ALTER TABLE staff_sso_transactions ADD COLUMN IF NOT EXISTS line_login_channel_id TEXT;
+ALTER TABLE staff_sso_transactions ADD COLUMN IF NOT EXISTS return_path TEXT;
+CREATE TABLE IF NOT EXISTS line_claim_events (
+  id TEXT PRIMARY KEY, conversation_id UUID REFERENCES conversations(id),
+  encrypted_response TEXT NOT NULL, reply_attempted BOOLEAN NOT NULL DEFAULT false,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+INSERT INTO schema_migrations(version) VALUES(9) ON CONFLICT DO NOTHING;
 `;
