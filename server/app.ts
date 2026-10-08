@@ -54,11 +54,20 @@ import { lineRecipientType } from '../shared/line.js';
 import { aiBehaviorSchema, loadAiBehavior } from './ai-behavior.js';
 import { vertexConfigured } from './vertex-auth.js';
 import { queueLineProfile } from './line-profiles.js';
+import type { AuthenticatedStaff } from './staff-line.js';
+import {
+  staffAccount,
+  confirmStaffLine,
+  updateOwnLine,
+  accountLineBody,
+  accountLinePreference,
+  accountLineRemoval,
+} from './staff-account.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
     rawBody?: Buffer;
-    agent?: Agent;
+    agent?: AuthenticatedStaff;
   }
 }
 const uuid = z.string().uuid();
@@ -241,6 +250,25 @@ export async function buildApp(
     demo: config.demo,
     agents: config.demo ? DEMO_AGENTS : undefined,
   }));
+  app.get('/api/account', async (request) => staffAccount(db, config, actor(request)));
+  app.post(
+    '/api/account/line',
+    { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } },
+    async (request) =>
+      confirmStaffLine(
+        db,
+        config,
+        actor(request),
+        accountLineBody.parse(request.body),
+        options.fetcher ?? fetch,
+      ),
+  );
+  app.patch('/api/account/line', async (request) =>
+    updateOwnLine(db, config, actor(request), accountLinePreference.parse(request.body)),
+  );
+  app.delete('/api/account/line', async (request) =>
+    updateOwnLine(db, config, actor(request), accountLineRemoval.parse(request.body), true),
+  );
   app.post('/api/auth/logout', async (request, reply) => {
     const hash = tokenHash(request.cookies.cusa_session ?? '');
     let ssoRevoked = true;

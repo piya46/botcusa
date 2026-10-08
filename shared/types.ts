@@ -1,5 +1,17 @@
 export type AgentRole = 'ADMIN' | 'AGENT' | 'REVIEWER';
 export type Agent = { id: string; name: string; email: string; role: AgentRole };
+export type StaffAccount = {
+  agent: Agent;
+  demo: boolean;
+  line: {
+    userId: string | null;
+    source: 'SSO' | 'OA_LINK' | null;
+    verified: boolean;
+    enabled: boolean;
+  };
+  lineManagedBySso: boolean;
+  canLinkLine: boolean;
+};
 export type CaseState = 'BOT' | 'WAITING_FOR_AGENT' | 'AGENT_IN_CHARGE' | 'CLOSED';
 export type DeliveryState =
   'RECEIVED' | 'QUEUED' | 'ACCEPTED' | 'FAILED' | 'UNKNOWN' | 'SIMULATED' | 'CANCELLED';

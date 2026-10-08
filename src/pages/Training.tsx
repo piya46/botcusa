@@ -75,7 +75,7 @@ export function TrainingPage({ agent }: { agent: Agent }) {
       <PageTitle
         eyebrow="TRAINING STUDIO"
         title="ชุดข้อมูล AI"
-        description="ตรวจคำตอบเจ้าหน้าที่ ก่อนนำไปฝึก AI"
+        description="ตรวจทานและส่งออกข้อมูลสำหรับฝึกต่อ ยังไม่ฝึกโมเดลอัตโนมัติ"
       >
         <button className="button" onClick={() => go('/admin/inbox?status=CLOSED')}>
           <MessageIcon />

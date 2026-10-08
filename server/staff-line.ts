@@ -3,6 +3,11 @@ import type { Config } from './config.js';
 import type { Queryable } from './db.js';
 import { audit } from './db.js';
 import { AppError } from './security.js';
+import type { Agent } from '../shared/types.js';
+
+export type AuthenticatedStaff = Agent & {
+  verifiedLineUserId?: string;
+};
 
 export const ssoLineSchema = z.object({
   linked: z.boolean(),
@@ -43,6 +48,7 @@ export async function bindStaffLine(
   source: 'SSO' | 'OA_LINK',
 ) {
   const [agent] = await tx.query('SELECT * FROM agents WHERE id=$1 FOR UPDATE', [agentId]);
+  if (!agent?.active) throw new AppError(403, 'บัญชีถูกปิดใช้งาน');
   const [conflict] = await tx.query('SELECT id FROM agents WHERE line_user_id=$1 AND id<>$2', [
     line.userId,
     agentId,

@@ -37,10 +37,14 @@ export function behaviorInstruction(b: AiBehavior) {
   ].join('\n');
 }
 export function basicReply(question: string, b: AiBehavior) {
-  const q = question.trim().replace(/[!！.。?？\s]+$/u, '');
+  const q = question.trim().replace(/[!！.。?？\s\p{Extended_Pictographic}\uFE0F]+$/u, '');
   const english = b.language === 'en' || (b.language === 'auto' && /^[\x00-\x7f]+$/.test(q));
   const formal = b.tone === 'formal';
-  if (/^(?:สวัสดี|หวัดดี|ดีจ้า|hello|hi|hey)(?:\s*(?:ครับ|ค่ะ|คะ|จ้า|จ้ะ|ค่า|คับ))?$/iu.test(q))
+  if (
+    /^(?:สวัสดี|หวัดดี|ดีจ้า|hello|hi|hey)(?:\s*(?:ครับผม|ครับ|ค่ะ|คะ|จ้า|จ้ะ|ค่า|คับ))?(?:\s*(?:มีเรื่องสอบถาม|มีเรื่องจะถาม|ขอสอบถาม|ขอถาม|สอบถามหน่อย)(?:ครับ|ค่ะ|คะ|ครับผม)?)?$/iu.test(
+      q,
+    )
+  )
     return english
       ? 'Hello! I’m the CUSA AI assistant. How can I help you?'
       : formal

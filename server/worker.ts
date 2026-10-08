@@ -8,7 +8,7 @@ import {
 import { randomUUID, createHash } from 'node:crypto';
 import type { Config } from './config.js';
 import { audit, enqueue, type Database, type Queryable, type Row } from './db.js';
-import { decrypt, encrypt, redact } from './security.js';
+import { AppError, decrypt, encrypt, redact } from './security.js';
 import {
   lineRequest,
   showLineLoading,
@@ -502,6 +502,8 @@ export class Worker {
         : 'USER_REQUEST'
       : null;
     let references: Row[] = [];
+    let usedKnowledge: string[] = [];
+    let providerError: string | null = null;
     let model = 'approved-knowledge';
     const [promptSetting] = await this.db.query(
       `SELECT value FROM settings WHERE key='system_prompt'`,
@@ -512,7 +514,8 @@ export class Worker {
     let responseKind = 'knowledge';
     const stylePrompt = `${activePrompt}\n${behaviorInstruction(behavior)}`;
     if (!transfer) {
-      const basic = conversational ? basicReply(question, behavior) : null;
+      // Greetings contain no association facts and are safe even in knowledge-only mode.
+      const basic = basicReply(question, behavior);
       if (basic) {
         answer = basic;
         responseKind = 'general';
@@ -537,8 +540,10 @@ export class Worker {
           handover = true;
           handoverReason = personalLookup ? 'VERIFICATION_REQUIRED' : 'NO_KNOWLEDGE';
         } else if (!vertexConfigured(this.config)) {
-          if (references.length) answer = references[0].published_content;
-          else if (conversational) {
+          if (references.length) {
+            answer = references[0].published_content;
+            usedKnowledge = [references[0].id];
+          } else if (conversational) {
             answer =
               behavior.language === 'en' ||
               (behavior.language === 'auto' && /^[\x00-\x7f]+$/.test(question))
@@ -602,11 +607,24 @@ ${conversational ? 'อนุญาตสนทนาเบื้องต้น
             } else {
               answer = decision.text;
               responseKind = decision.action === 'clarify' ? 'clarify' : decision.kind;
+              usedKnowledge = decision.kind === 'knowledge' ? decision.reference_ids : [];
             }
             model = this.config.vertexModel;
-          } catch {
-            handover = true;
-            handoverReason = 'PROVIDER_ERROR';
+          } catch (error) {
+            // AppError messages here are authored locally, never raw provider response bodies.
+            providerError =
+              error instanceof AppError ? error.message : 'เรียก AI หรืออ่านรูปแบบคำตอบไม่สำเร็จ';
+            const direct = references.find(
+              (k) => k.direct_match && k.published_content.length <= 4500,
+            );
+            if (direct) {
+              answer = direct.published_content;
+              usedKnowledge = [direct.id];
+              model = 'approved-knowledge';
+            } else {
+              handover = true;
+              handoverReason = 'PROVIDER_ERROR';
+            }
           }
         }
       }
@@ -672,9 +690,16 @@ ${conversational ? 'อนุญาตสนทนาเบื้องต้น
             response_kind: responseKind,
             ai_behavior: behavior,
             model,
+            configured_model: this.config.vertexModel || null,
+            provider_error: providerError,
             handover,
             handover_reason: handoverReason,
-            knowledge: references.map((k) => ({ id: k.id, version: k.version })),
+            knowledge: references.map((k) => ({
+              id: k.id,
+              version: k.version,
+              title: k.published_title,
+            })),
+            knowledge_used: handover ? [] : usedKnowledge,
             prompt_hash: createHash('sha256').update(stylePrompt).digest('hex'),
           }),
         ],
@@ -686,20 +711,69 @@ ${conversational ? 'อนุญาตสนทนาเบื้องต้น
     const all = await this.db.query(
       `SELECT * FROM knowledge WHERE published_content IS NOT NULL AND status<>'ARCHIVED'`,
     );
-    const lower = question.toLocaleLowerCase('th');
+    const normalize = (value: string) => value.normalize('NFKC').toLocaleLowerCase('th').trim();
+    const lower = normalize(question);
+    const stopWords = new Set([
+      'ครับ',
+      'ค่ะ',
+      'คะ',
+      'ครับผม',
+      'นะ',
+      'หน่อย',
+      'ขอ',
+      'สอบถาม',
+      'มี',
+      'ไหม',
+      'มั้ย',
+      'อะไร',
+      'อย่างไร',
+      'ยังไง',
+      'นี้',
+      'นั้น',
+      'ที่',
+      'ของ',
+      'คือ',
+      'ว่า',
+      'และ',
+      'ได้',
+      'the',
+      'a',
+      'an',
+      'is',
+      'are',
+      'what',
+      'how',
+      'please',
+      'can',
+      'you',
+      'i',
+    ]);
     const tokens = Array.from(new Intl.Segmenter('th', { granularity: 'word' }).segment(lower))
-      .filter((s) => s.isWordLike && s.segment.length > 1)
+      .filter((s) => s.isWordLike && s.segment.length > 1 && !stopWords.has(s.segment))
       .map((s) => s.segment);
-    const scored: (Row & { score: number })[] = all.map((k) => ({
-      ...k,
-      score:
-        (k.published_keywords as string[]).reduce(
-          (n, word) => n + (lower.includes(word.toLocaleLowerCase('th')) ? 4 : 0),
-          0,
-        ) +
-        tokens.filter((word) => (k.published_title + ' ' + k.published_content).includes(word))
-          .length,
-    }));
+    const scored: (Row & { score: number })[] = all.map((k) => {
+      const title = normalize(k.published_title ?? ''),
+        content = normalize(k.published_content);
+      const terms = [...new Set(tokens)];
+      const titleMatches = terms.filter((word) => title.includes(word)).length;
+      const exactTitle = Boolean(title && lower.includes(title));
+      return {
+        ...k,
+        // Raw fallback is only for a close match to an approved question, never
+        // a document found merely because it shares a common word or embedding.
+        direct_match: exactTitle || (titleMatches >= 2 && titleMatches / terms.length >= 0.75),
+        score:
+          (exactTitle ? 6 : 0) +
+          (k.published_keywords as string[]).reduce(
+            (n, word) => n + (normalize(word) && lower.includes(normalize(word)) ? 4 : 0),
+            0,
+          ) +
+          terms.reduce(
+            (n, word) => n + (title.includes(word) ? 2 : 0) + (content.includes(word) ? 1 : 0),
+            0,
+          ),
+      };
+    });
     if (this.config.embeddingModel) {
       try {
         const vector = await embed(

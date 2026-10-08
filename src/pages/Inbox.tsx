@@ -35,6 +35,7 @@ import type {
   CaseTransfer,
 } from '../../shared/types';
 import { TransferDialog } from './Tickets';
+import { AiReplyDetails } from './AiReplyDetails';
 import { api, clockTime, formatDate, notify, post, relative } from '../api';
 import {
   Avatar,
@@ -491,6 +492,7 @@ function SelectedCase({
                       <Delivery state={m.delivery_status} />
                     )}
                   </div>
+                  {m.sender_type === 'BOT' && <AiReplyDetails message={m} />}
                 </div>
               </div>
             ),

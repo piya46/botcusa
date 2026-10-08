@@ -1,11 +1,10 @@
 import { createHash } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import type { Agent } from '../shared/types.js';
 import { staffRole } from '../shared/roles.js';
 import { CUSA_CALLBACK_PATH } from '../shared/sso.js';
 import type { SsoCallbackHandler } from './sso-callback.js';
-import { bindStaffLine, ssoLineIdentity } from './staff-line.js';
+import { bindStaffLine, ssoLineIdentity, type AuthenticatedStaff } from './staff-line.js';
 import { verifyLineIdentity } from './line-profiles.js';
 import type { Config } from './config.js';
 import { audit, type Database } from './db.js';
@@ -53,7 +52,7 @@ export async function authenticateStaff(
   config: Config,
   hash: string,
   fetcher: Fetcher,
-): Promise<Agent & { verifiedLineUserId?: string }> {
+): Promise<AuthenticatedStaff> {
   for (let attempt = 0; attempt < 2; attempt++) {
     const session = await staffAccess(db, config, hash, fetcher);
     try {
@@ -108,7 +107,10 @@ export function registerStaffSso(
           returnTo: z.string().max(250).optional(),
         })
         .parse(request.body ?? {});
+      if (input.lineIdToken && config.ssoLineSameProvider)
+        throw new AppError(403, 'บัญชี LINE จัดการผ่าน CUSA SSO เท่านั้น');
       const returnPath =
+        input.returnTo === '/admin/account' ||
         /^\/admin\/inbox\?case=[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(
           input.returnTo ?? '',
         )
@@ -153,6 +155,8 @@ export function registerStaffSso(
   );
   return async (request, reply, transaction, code) => {
     try {
+      if (transaction.line_user_id && config.ssoLineSameProvider)
+        throw new AppError(403, 'การเชื่อม LINE เปลี่ยนแล้ว กรุณาเข้าสู่ระบบใหม่');
       const grant = await exchangeCusaGrant(
         config,
         code,
@@ -204,6 +208,7 @@ export function registerStaffSso(
         }
         const ssoLine = ssoLineIdentity(config, grant.profile);
         if (
+          !config.ssoLineSameProvider &&
           transaction.line_user_id &&
           transaction.line_login_channel_id === config.lineLoginChannelId
         )

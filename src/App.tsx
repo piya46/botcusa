@@ -18,6 +18,7 @@ import {
   ShieldCheck,
   Sparkles,
   Users,
+  UserRound,
   Ticket,
   X,
 } from 'lucide-react';
@@ -32,6 +33,7 @@ import { Connect } from './pages/Connect';
 import { TicketsPage, TicketNotifications } from './pages/Tickets';
 import { InsightsPage } from './pages/Insights';
 import { Install } from './pages/Install';
+import { AccountPage } from './pages/Account';
 
 const navigation = [
   { path: 'overview', title: 'ภาพรวม', en: 'Overview', icon: LayoutDashboard },
@@ -204,12 +206,17 @@ export default function App() {
           ))}
         </nav>
         <div className="sidebar-bottom">
-          {session.agent.role !== 'REVIEWER' && (
-            <a className="nav-item" href="/connect/staff" target="_blank" rel="noopener">
-              <Bell size={19} />
-              <span>เชื่อม LINE รับเคส</span>
-            </a>
-          )}
+          <a
+            className={`nav-item ${current === 'account' ? 'active' : ''}`}
+            href="/admin/account"
+            onClick={(e) => {
+              e.preventDefault();
+              go('/admin/account');
+            }}
+          >
+            <UserRound size={19} />
+            <span>บัญชีของฉัน</span>
+          </a>
           {session.agent.role === 'ADMIN' && (
             <a
               className={`nav-item ${current === 'settings' ? 'active' : ''}`}
@@ -263,7 +270,9 @@ export default function App() {
             </button>
             <span>CUSA Workspace</span>
             <ChevronRight size={14} />
-            <strong>{item?.title ?? 'ตั้งค่าระบบ'}</strong>
+            <strong>
+              {current === 'account' ? 'บัญชีของฉัน' : (item?.title ?? 'ตั้งค่าระบบ')}
+            </strong>
           </div>
           <div className="topbar-right">
             <form
@@ -314,6 +323,8 @@ export default function App() {
             <BroadcastPage agent={session.agent} demo={session.demo} />
           ) : current === 'settings' ? (
             <SettingsPage />
+          ) : current === 'account' ? (
+            <AccountPage />
           ) : (
             <Overview />
           )}

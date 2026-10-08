@@ -45,6 +45,7 @@ async function fixture(sameProvider = true) {
   let roles = ['agent'],
     active = true,
     lineId = ssoLine,
+    localProofId = localLine,
     profileName = 'ชื่อไลน์จริง',
     rejectPush = false;
   const calls: { path: string; body: any; retry?: string }[] = [];
@@ -53,8 +54,10 @@ async function fixture(sameProvider = true) {
     if (path === '/oauth2/v2.1/verify') {
       const body = new URLSearchParams(String(init?.body));
       assert.equal(body.get('client_id'), config.lineLoginChannelId);
+      if (body.get('id_token') === 'invalid-line-token'.repeat(3))
+        return Response.json({ error: 'invalid token' }, { status: 400 });
       return Response.json({
-        sub: localLine,
+        sub: localProofId,
         aud: config.lineLoginChannelId,
         iss: 'https://access.line.me',
         exp: Math.floor(Date.now() / 1000) + 300,
@@ -105,7 +108,16 @@ async function fixture(sameProvider = true) {
       url: '/api/auth/callback?state=' + url.searchParams.get('state') + '&code=' + 'B'.repeat(43),
       headers: { cookie: start.cookies.map((c) => `${c.name}=${c.value}`).join('; ') },
     });
-    return { url, response, agent: (await db.query<Agent & Row>('SELECT * FROM agents'))[0] };
+    return {
+      url,
+      response,
+      agent: (
+        await db.query<Agent & Row>(
+          'SELECT a.* FROM agents a JOIN staff_identities i ON i.agent_id=a.id WHERE i.cusa_sub=$1',
+          [sub],
+        )
+      )[0],
+    };
   };
   const waiting = async () => {
     const [user] = await db.query(
@@ -140,12 +152,14 @@ async function fixture(sameProvider = true) {
       roles?: string[];
       active?: boolean;
       lineId?: string;
+      localProofId?: string;
       rejectPush?: boolean;
       profileName?: string;
     }) => {
       roles = v.roles ?? roles;
       active = v.active ?? active;
       lineId = v.lineId ?? lineId;
+      localProofId = v.localProofId ?? localProofId;
       rejectPush = v.rejectPush ?? rejectPush;
       profileName = v.profileName ?? profileName;
     },
@@ -414,6 +428,281 @@ test('LINE profile updates guest name, preserves CUSA name, and queues a dedupli
     assert.equal(
       (await f.db.query('SELECT name FROM users WHERE id=$1', [user.id]))[0].name,
       'ชื่อจาก CUSA',
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+const sessionCookie = (response: { cookies: { name: string; value: string }[] }) =>
+  response.cookies
+    .filter((c) => c.name === 'cusa_session')
+    .map((c) => `${c.name}=${c.value}`)
+    .join('; ');
+
+test('same Provider account shows SSO binding and forbids self unlink/rebind including the legacy linking entry', async () => {
+  const f = await fixture();
+  try {
+    f.change({ roles: ['admin'] });
+    const flow = await f.login({ returnTo: '/admin/account' });
+    assert.equal(flow.response.headers.location, '/admin/account');
+    const headers = { cookie: sessionCookie(flow.response), origin: f.config.origin };
+    const account = await f.app.inject({ url: '/api/account', headers });
+    assert.equal(account.statusCode, 200, account.body);
+    assert.deepEqual(account.json().line, {
+      userId: ssoLine,
+      source: 'SSO',
+      verified: true,
+      enabled: true,
+    });
+    assert.equal(account.json().lineManagedBySso, true);
+    assert.equal(account.json().canLinkLine, false);
+    const proof = { accountId: flow.agent.id, expectedCurrentUserId: ssoLine };
+    assert.equal(
+      (await f.app.inject({ method: 'DELETE', url: '/api/account/line', headers, payload: proof }))
+        .statusCode,
+      403,
+    );
+    assert.equal(
+      (
+        await f.app.inject({
+          method: 'POST',
+          url: '/api/account/line',
+          headers,
+          payload: { ...proof, source: 'OA_LINK', lineIdToken: 'synthetic-id-token'.repeat(3) },
+        })
+      ).statusCode,
+      403,
+    );
+    assert.equal(
+      (
+        await f.app.inject({
+          method: 'POST',
+          url: '/api/auth/sso/start',
+          headers,
+          payload: { lineIdToken: 'synthetic-id-token'.repeat(3) },
+        })
+      ).statusCode,
+      403,
+    );
+    assert.equal(
+      (
+        await f.app.inject({
+          method: 'PATCH',
+          url: `/api/agents/${flow.agent.id}/line-notifications`,
+          headers,
+          payload: { userId: null, enabled: false },
+        })
+      ).statusCode,
+      400,
+    );
+    const muted = await f.app.inject({
+      method: 'PATCH',
+      url: '/api/account/line',
+      headers,
+      payload: { ...proof, enabled: false },
+    });
+    assert.equal(muted.statusCode, 200, muted.body);
+    assert.equal(muted.json().line.enabled, false);
+    assert.equal(muted.json().line.userId, ssoLine);
+    assert.equal(
+      (await f.app.inject({ url: '/api/settings', headers })).statusCode,
+      200,
+      'admin permissions remain unchanged',
+    );
+    assert.equal((await f.app.inject({ url: '/api/agents', headers })).statusCode, 200);
+  } finally {
+    await f.close();
+  }
+});
+
+test('different Provider self-link uses verified LINE proof, enforces account ownership, and preserves staff permissions', async () => {
+  const f = await fixture(false);
+  try {
+    const flow = await f.login();
+    const headers = { cookie: sessionCookie(flow.response), origin: f.config.origin };
+    const proof = {
+      source: 'OA_LINK',
+      accountId: flow.agent.id,
+      expectedCurrentUserId: null,
+      lineIdToken: 'synthetic-id-token'.repeat(3),
+    };
+    const initial = await f.app.inject({ url: '/api/account', headers });
+    assert.equal(initial.json().lineManagedBySso, false);
+    assert.equal(initial.json().canLinkLine, true);
+    assert.equal(initial.json().line.userId, null, 'SSO UID from another Provider is not adopted');
+    assert.equal(
+      (
+        await f.app.inject({
+          method: 'POST',
+          url: '/api/account/line',
+          headers: { origin: f.config.origin },
+          payload: proof,
+        })
+      ).statusCode,
+      401,
+    );
+    assert.equal(
+      (
+        await f.app.inject({
+          method: 'POST',
+          url: '/api/account/line',
+          headers: { ...headers, origin: 'https://foreign.example.org' },
+          payload: proof,
+        })
+      ).statusCode,
+      403,
+    );
+    assert.equal(
+      (
+        await f.app.inject({
+          method: 'POST',
+          url: '/api/account/line',
+          headers,
+          payload: { ...proof, accountId: randomUUID() },
+        })
+      ).statusCode,
+      403,
+    );
+    assert.equal(
+      (
+        await f.app.inject({
+          method: 'POST',
+          url: '/api/account/line',
+          headers,
+          payload: { ...proof, userId: ssoLine },
+        })
+      ).statusCode,
+      400,
+    );
+    assert.equal(
+      (
+        await f.app.inject({
+          method: 'POST',
+          url: '/api/account/line',
+          headers,
+          payload: { ...proof, lineIdToken: 'invalid-line-token'.repeat(3) },
+        })
+      ).statusCode,
+      401,
+    );
+    assert.equal(
+      (await f.db.query('SELECT line_user_id FROM agents WHERE id=$1', [flow.agent.id]))[0]
+        .line_user_id,
+      null,
+    );
+    const linked = await f.app.inject({
+      method: 'POST',
+      url: '/api/account/line',
+      headers,
+      payload: proof,
+    });
+    assert.equal(linked.statusCode, 200, linked.body);
+    assert.deepEqual(linked.json().line, {
+      userId: localLine,
+      source: 'OA_LINK',
+      verified: true,
+      enabled: true,
+    });
+    assert.equal((await f.app.inject({ url: '/api/conversations', headers })).statusCode, 200);
+    assert.equal(
+      (await f.app.inject({ url: '/api/settings', headers })).statusCode,
+      403,
+      'self service does not grant admin rights',
+    );
+    const old = await f.app.inject({
+      method: 'DELETE',
+      url: '/api/account/line',
+      headers,
+      payload: { accountId: flow.agent.id, expectedCurrentUserId: null },
+    });
+    assert.equal(old.statusCode, 409, 'stale tab cannot remove a new binding');
+    assert.equal(
+      (
+        await f.app.inject({
+          method: 'PATCH',
+          url: '/api/account/line',
+          headers,
+          payload: { accountId: randomUUID(), expectedCurrentUserId: localLine, enabled: false },
+        })
+      ).statusCode,
+      403,
+    );
+    const removed = await f.app.inject({
+      method: 'DELETE',
+      url: '/api/account/line',
+      headers,
+      payload: { accountId: flow.agent.id, expectedCurrentUserId: localLine },
+    });
+    assert.equal(removed.statusCode, 200, removed.body);
+    assert.equal(removed.json().line.userId, null);
+    assert.equal(removed.json().line.enabled, false);
+    assert.equal(
+      (await f.app.inject({ url: '/api/conversations', headers })).statusCode,
+      200,
+      'unlink leaves the staff session usable',
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test('self relink prevents duplicate ownership, preserves opt-out and cancels pending private notifications', async () => {
+  const f = await fixture(false);
+  try {
+    const flow = await f.login({ lineIdToken: 'synthetic-id-token'.repeat(3) });
+    const headers = { cookie: sessionCookie(flow.response), origin: f.config.origin };
+    await f.db.query('UPDATE agents SET line_alerts_enabled=false WHERE id=$1', [flow.agent.id]);
+    const nextUid = 'U' + 'e'.repeat(32),
+      otherId = randomUUID();
+    await f.db.query(
+      "INSERT INTO agents(id,name,email,password_hash,role,line_user_id) VALUES($1,'Other','other@example.org','unused','AGENT',$2)",
+      [otherId, nextUid],
+    );
+    f.change({ localProofId: nextUid });
+    const proof = {
+      source: 'OA_LINK',
+      accountId: flow.agent.id,
+      expectedCurrentUserId: localLine,
+      lineIdToken: 'synthetic-id-token'.repeat(3),
+    };
+    const conflict = await f.app.inject({
+      method: 'POST',
+      url: '/api/account/line',
+      headers,
+      payload: proof,
+    });
+    assert.equal(conflict.statusCode, 409, conflict.body);
+    await f.db.query('UPDATE agents SET line_user_id=NULL WHERE id=$1', [otherId]);
+    const { c } = await f.waiting();
+    const [team] = await f.db.query("INSERT INTO teams(name) VALUES('Test team') RETURNING id");
+    const [transfer] = await f.db.query(
+      "INSERT INTO case_transfers(conversation_id,to_team_id,created_by,to_team_name,redacted_reason,request_id,routing_version) VALUES($1,$2,$3,'Test team','test',$4,0) RETURNING id",
+      [c.id, team.id, flow.agent.id, randomUUID()],
+    );
+    const [notice] = await f.db.query(
+      "INSERT INTO notifications(agent_id,conversation_id,transfer_id,title,line_status,line_payload) VALUES($1,$2,$3,'test','PENDING','synthetic') RETURNING id",
+      [flow.agent.id, c.id, transfer.id],
+    );
+    const updated = await f.app.inject({
+      method: 'POST',
+      url: '/api/account/line',
+      headers,
+      payload: proof,
+    });
+    assert.equal(updated.statusCode, 200, updated.body);
+    assert.equal(updated.json().line.userId, nextUid);
+    assert.equal(updated.json().line.enabled, false, 'relink preserves opt-out');
+    const [n] = await f.db.query('SELECT line_status,line_payload FROM notifications WHERE id=$1', [
+      notice.id,
+    ]);
+    assert.equal(n.line_status, 'CANCELLED');
+    assert.equal(n.line_payload, null);
+    const again = await f.login();
+    assert.equal(
+      again.agent.line_user_id,
+      nextUid,
+      'ordinary login does not overwrite a different-Provider binding',
     );
   } finally {
     await f.close();

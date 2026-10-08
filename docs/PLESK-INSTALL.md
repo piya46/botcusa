@@ -132,8 +132,8 @@ Deploy โค้ดแล้วรัน `build` ใน Plesk → Node.js → Ru
 
 ถ้า CUSA บังคับ LINE UID ให้ตั้ง `CUSA_CLAIM_SCOPES=identity:read profile email line` และเปิดอนุญาต `line` ใน “ตั้งค่าข้อมูลและ Consent” ของ CUSA ด้วย
 
-- ระบบทดสอบคนละ Provider: `CUSA_LINE_SAME_PROVIDER=false` เจ้าหน้าที่เชื่อม OA ผ่าน `/connect/staff`
-- Production Provider เดียวกัน: `CUSA_LINE_SAME_PROVIDER=true` แล้วเข้าสู่ SSO ใหม่เพื่อผูก LINE อัตโนมัติ
+- ระบบทดสอบคนละ Provider: `CUSA_LINE_SAME_PROVIDER=false` เจ้าหน้าที่เข้า **บัญชีของฉัน** (`/admin/account`) → **ผูก LINE** หรือ **ผูก LINE ใหม่** → ตรวจชื่อ LINE → **ใช่ ผูก LINE นี้**
+- Production Provider เดียวกัน: `CUSA_LINE_SAME_PROVIDER=true` แล้วเข้าสู่ SSO ใหม่เพื่อผูก LINE อัตโนมัติ หน้า **บัญชีของฉัน** แสดง **ผูกผ่าน SSO แล้ว** เปลี่ยนหรือยกเลิกการผูกใน Member Desk ไม่ได้ แต่เปิด–ปิดการแจ้งเตือนได้
 
 ดูวิธีตั้งค่าและแก้ `invalid_scope` ใน [ENVIRONMENT.md](ENVIRONMENT.md#เมื่อเปิด-line-uid-แล้วพบ-invalid_scope) การเปลี่ยน Provider ต้องเชื่อม/ล็อกอินใหม่ ไม่ใช้ User ID ของ Provider เก่าทดแทนกัน
 

@@ -80,7 +80,7 @@ export function KnowledgePage({ agent }: { agent: Agent }) {
         </div>
         <div>
           <h3>ตรวจทานก่อนเผยแพร่</h3>
-          <p>ผู้ตรวจทานอีกคนอนุมัติ · บอทใช้ฉบับเผยแพร่ล่าสุด</p>
+          <p>AI ใช้ฉบับเผยแพร่ประกอบคำตอบ · ไม่ใช่การฝึกโมเดล</p>
         </div>
         <div className="knowledge-count">
           <strong>

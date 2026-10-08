@@ -33,6 +33,7 @@ async function fixture() {
     text: 'ติดปัญหาขั้นตอนไหนคะ',
     reference_ids: [],
   };
+  let failureStatus = 0;
   const calls: { url: string; body: any; headers: any }[] = [];
   const fetcher = (async (url, init) => {
     calls.push({
@@ -40,6 +41,8 @@ async function fixture() {
       body: init?.body ? JSON.parse(String(init.body)) : null,
       headers: init?.headers,
     });
+    if (failureStatus)
+      return Response.json({ error: 'synthetic private provider body' }, { status: failureStatus });
     return Response.json({
       candidates: [
         { finishReason: 'STOP', content: { parts: [{ text: JSON.stringify(decision) }] } },
@@ -86,6 +89,9 @@ async function fixture() {
     behavior,
     decision: (value: unknown) => {
       decision = value;
+    },
+    failProvider: (status: number) => {
+      failureStatus = status;
     },
     close: async () => {
       await worker.stop();
@@ -435,6 +441,112 @@ test('basic conversation fallback follows the language setting without Vertex cr
     await f.behavior({ language: 'th' });
     const thai = await f.say(c, 'Still unclear');
     assert.match(thai.reply.text, /ขอรายละเอียด/);
+  } finally {
+    await f.close();
+  }
+});
+
+test('published short questions reach Vertex with knowledge and selected personality; drafts stay excluded', async () => {
+  const f = await fixture();
+  try {
+    await f.db.query("UPDATE knowledge SET status='ARCHIVED'");
+    const [k] = await f.db.query(
+      "INSERT INTO knowledge(title,content,published_title,published_content,category,status,created_by,updated_by) VALUES('สมัครสมาชิก','สมัครผ่านเว็บไซต์สมาคม เลือกเมนูสมัครสมาชิก','สมัครสมาชิก','สมัครผ่านเว็บไซต์สมาคม เลือกเมนูสมัครสมาชิก','ทั่วไป','PUBLISHED',$1,$1) RETURNING id",
+      [DEMO_AGENTS[0].id],
+    );
+    await f.db.query(
+      "INSERT INTO knowledge(title,content,category,status,created_by,updated_by) VALUES('สมัครสมาชิก','เนื้อหาลับฉบับร่างห้ามส่งให้โมเดล','ทั่วไป','DRAFT',$1,$1)",
+      [DEMO_AGENTS[0].id],
+    );
+    await f.behavior({ mode: 'knowledge_only', tone: 'formal', format: 'steps' });
+    const retrieved = await f.worker.searchKnowledge('สมัครสมาชิก');
+    assert.ok(
+      retrieved.some((r) => r.id === k.id),
+      'short Thai question must find published title without keywords',
+    );
+    f.decision({
+      action: 'answer',
+      kind: 'knowledge',
+      text: '1. เข้าเว็บไซต์สมาคม\n2. เลือกเมนูสมัครสมาชิก',
+      reference_ids: [k.id],
+    });
+    const result = await f.say(await f.waiting(), 'สมัครสมาชิก');
+    assert.equal(result.reply.metadata.handover, false);
+    const call = f.calls.find((c) => c.url.endsWith(':generateContent'))!;
+    assert.ok(call);
+    const payload = JSON.parse(call.body.contents[0].parts[0].text);
+    assert.equal(payload.references[0].id, k.id);
+    assert.match(payload.references[0].content, /เว็บไซต์สมาคม/);
+    assert.ok(!JSON.stringify(payload).includes('เนื้อหาลับ'));
+    assert.match(call.body.systemInstruction.parts[0].text, /เป็นทางการ/);
+    assert.match(call.body.systemInstruction.parts[0].text, /เรียงขั้นตอน/);
+    assert.equal(result.reply.text, '1. เข้าเว็บไซต์สมาคม\n2. เลือกเมนูสมัครสมาชิก');
+  } finally {
+    await f.close();
+  }
+});
+
+test('greetings work in knowledge-only mode without invoking Vertex or handing over', async () => {
+  const f = await fixture();
+  try {
+    await f.behavior({ mode: 'knowledge_only' });
+    for (const greeting of [
+      'สวัสดีครับ',
+      'สวัสดีครับผม',
+      'สวัสดีค่ะ 😊',
+      'สวัสดีครับมีเรื่องสอบถามครับ',
+      'Hello!',
+    ]) {
+      const result = await f.say(await f.waiting(), greeting);
+      assert.equal(result.reply.metadata.handover, false, greeting);
+      assert.equal(result.reply.metadata.response_kind, 'general');
+    }
+    assert.equal(f.calls.length, 0);
+  } finally {
+    await f.close();
+  }
+});
+
+test('exact published association question answers from knowledge on Vertex failure and records a safe diagnostic', async () => {
+  const f = await fixture();
+  try {
+    await f.db.query("UPDATE knowledge SET status='ARCHIVED'");
+    const title = 'สมาคมนี้มีชื่อทางการว่าอะไร';
+    const content =
+      'ชื่อเต็มคือ สมาคมนิสิตเก่าวิทยาศาสตร์ จุฬาลงกรณ์มหาวิทยาลัย (ส.น.ว.จ.) ภาษาอังกฤษ Chulalongkorn University Science Alumni หรือ C.U.S.A';
+    const [k] = await f.db.query(
+      "INSERT INTO knowledge(title,content,published_title,published_content,category,status,created_by,updated_by) VALUES($1,$2,$1,$2,'ทั่วไป','PUBLISHED',$3,$3) RETURNING id",
+      [title, content, DEMO_AGENTS[0].id],
+    );
+    f.failProvider(403);
+    const result = await f.say(await f.waiting(), title);
+    assert.equal(result.reply.metadata.handover, false);
+    assert.equal(result.reply.text, content);
+    assert.equal(result.reply.metadata.model, 'approved-knowledge');
+    assert.deepEqual(result.reply.metadata.knowledge_used, [k.id]);
+    assert.equal(result.reply.metadata.knowledge[0].title, title);
+    assert.match(result.reply.metadata.provider_error, /HTTP 403/);
+    assert.ok(!JSON.stringify(result.reply).includes('synthetic private provider body'));
+    const request = f.calls.find((c) => c.url.endsWith(':generateContent'))!;
+    assert.equal(JSON.parse(request.body.contents[0].parts[0].text).references[0].content, content);
+    assert.equal(
+      (
+        await f.db.query('SELECT status FROM conversations WHERE id=$1', [
+          result.reply.conversation_id,
+        ])
+      )[0].status,
+      'BOT',
+    );
+    const unknown = await f.say(await f.waiting(), 'zzzxxyy');
+    assert.equal(unknown.reply.metadata.handover_reason, 'PROVIDER_ERROR');
+    assert.match(unknown.reply.metadata.provider_error, /HTTP 403/);
+    await f.db.query('UPDATE knowledge SET published_content=$2 WHERE id=$1', [
+      k.id,
+      content.repeat(50),
+    ]);
+    const tooLong = await f.say(await f.waiting(), title);
+    assert.equal(tooLong.reply.metadata.handover_reason, 'PROVIDER_ERROR');
+    assert.ok(tooLong.reply.text.length <= 4500, 'never queue an oversized raw fallback for LINE');
   } finally {
     await f.close();
   }
