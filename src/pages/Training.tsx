@@ -75,7 +75,7 @@ export function TrainingPage({ agent }: { agent: Agent }) {
       <PageTitle
         eyebrow="TRAINING STUDIO"
         title="ชุดข้อมูล AI"
-        description="ตรวจทานและส่งออกข้อมูลสำหรับฝึกต่อ ยังไม่ฝึกโมเดลอัตโนมัติ"
+        description="สอนวิธีตอบจากตัวอย่างที่อนุมัติ ให้ Gemini เรียบเรียงตามบุคลิกที่ตั้งไว้"
       >
         <button className="button" onClick={() => go('/admin/inbox?status=CLOSED')}>
           <MessageIcon />
@@ -126,8 +126,8 @@ export function TrainingPage({ agent }: { agent: Agent }) {
             <Layers size={20} />
           </span>
           <div>
-            <strong>ส่งออกชุดข้อมูล</strong>
-            <small>ชุดข้อมูลที่มีเวอร์ชัน</small>
+            <strong>ใช้ประกอบคำตอบ</strong>
+            <small>เปิดใช้ในตั้งค่า AI · ส่งออกได้ด้วย</small>
           </div>
         </div>
       </div>
@@ -415,6 +415,24 @@ export function TrainingPage({ agent }: { agent: Agent }) {
             </p>
           )}
           <div className="modal-footer">
+            {selected.status === 'APPROVED' && agent.role !== 'AGENT' && (
+              <button
+                className="button"
+                disabled={busy}
+                onClick={async () => {
+                  const ok = await run(
+                    () => post(`/training/${selected.id}/retire`, {}),
+                    'เลิกใช้ตัวอย่างแล้ว',
+                  );
+                  if (ok) {
+                    setSelected(null);
+                    void datasets.reload();
+                  }
+                }}
+              >
+                เลิกใช้ตัวอย่างนี้
+              </button>
+            )}
             {selected.status === 'DRAFT' ? (
               edit ? (
                 <>

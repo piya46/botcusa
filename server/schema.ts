@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
   token_hash TEXT PRIMARY KEY, agent_id UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
   expires_at TIMESTAMPTZ NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS public_display_name TEXT;
 CREATE TABLE IF NOT EXISTS users (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(), line_user_id TEXT NOT NULL UNIQUE,
   cusa_sub TEXT UNIQUE, email TEXT, name TEXT NOT NULL, department TEXT,

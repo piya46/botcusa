@@ -291,7 +291,10 @@ test('signed Flex postback claims once, notifies customer and staff, and rejects
       [c.id],
     );
     assert.equal(ack.delivery_status, 'ACCEPTED');
-    assert.match(decrypt(ack.encrypted_text, f.config.encryptionKey), /เจ้าหน้าที่รับเรื่องแล้ว/);
+    assert.ok(
+      decrypt(ack.encrypted_text, f.config.encryptionKey).includes(`${agent.name} รับเรื่องแล้ว`),
+    );
+    assert.equal(ack.metadata.public_display_name, agent.name);
     const pushes = f.calls.filter((c) => c.path.endsWith('/push'));
     assert.equal(pushes.length, 2);
     assert.ok(

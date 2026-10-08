@@ -296,7 +296,7 @@ test('only missing knowledge creates gaps; conversion stays draft and withdrawal
   await assert.rejects(draftFromGap(db, gaps[0].id, DEMO_AGENTS[0].id, input), /ถอน/);
   assert.equal(
     (await db.query(`SELECT status FROM conversations WHERE id=$1`, [c.id]))[0].status,
-    'WAITING_FOR_AGENT',
+    'BOT',
   );
 });
 

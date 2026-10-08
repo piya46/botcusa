@@ -130,6 +130,24 @@ export async function createDataset(db: Database, actor: Agent, name: string) {
     return dataset;
   });
 }
+export async function retireExample(db: Database, actor: Agent, id: string) {
+  if (!['ADMIN', 'REVIEWER'].includes(actor.role))
+    throw new AppError(403, 'ต้องมีสิทธิ์ผู้ตรวจทาน');
+  await db.transaction(async (tx) => {
+    const [row] = await tx.query('SELECT status FROM training_examples WHERE id=$1 FOR UPDATE', [
+      id,
+    ]);
+    if (row?.status !== 'APPROVED') throw new AppError(409, 'ตัวอย่างนี้ไม่ได้เปิดใช้งาน');
+    await tx.query("UPDATE training_examples SET status='REVOKED',updated_at=now() WHERE id=$1", [
+      id,
+    ]);
+    await tx.query('UPDATE dataset_items SET snapshot=NULL,revoked_at=now() WHERE example_id=$1', [
+      id,
+    ]);
+    await audit(tx, actor.id, 'TRAINING_RETIRED', 'training_example', id);
+  });
+  return { ok: true };
+}
 export async function revokeMessageData(tx: Queryable, messageId: string) {
   // Lock the case first, matching message insertion and analysis completion.
   await tx.query(
@@ -144,6 +162,17 @@ export async function revokeMessageData(tx: Queryable, messageId: string) {
     `DELETE FROM conversation_analyses WHERE conversation_id=(SELECT conversation_id FROM messages WHERE id=$1)`,
     [messageId],
   );
+  const summaries = await tx.query(
+    "SELECT id,metadata FROM messages WHERE conversation_id=(SELECT conversation_id FROM messages WHERE id=$1) AND metadata->>'system_event'='AI_INTAKE' AND withdrawn_at IS NULL",
+    [messageId],
+  );
+  for (const summary of summaries) {
+    if (summary.metadata.source_message_ids?.includes(messageId))
+      await tx.query(
+        "UPDATE messages SET encrypted_text=NULL,redacted_text='[WITHDRAWN]',metadata='{}',withdrawn_at=now() WHERE id=$1",
+        [summary.id],
+      );
+  }
   await tx.query(
     `UPDATE knowledge_gaps SET status='REVOKED',question='[WITHDRAWN]' WHERE message_id=$1`,
     [messageId],

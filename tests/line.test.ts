@@ -207,9 +207,13 @@ test('loading is bounded, respects demo and disabled modes, and excludes old mes
   const human = await conversation();
   await db.query(`UPDATE conversations SET status='WAITING_FOR_AGENT' WHERE id=$1`, [human.c.id]);
   await worker.botReply(human.m.id);
+  assert.equal(calls, 0);
   const explicit = await conversation('ขอคุยกับคน');
   await worker.botReply(explicit.m.id);
-  assert.equal(calls, 0);
+  assert.equal(calls, 1, 'show loading while collecting details before handover');
+  const immediate = await conversation('ขอคุยกับคน ส่งต่อเลย');
+  await worker.botReply(immediate.m.id);
+  assert.equal(calls, 1, 'explicit skip needs no loading or AI');
   assert.throws(
     () => getConfig({ APP_MODE: 'demo', DATA_DIR: directory, LINE_LOADING_SECONDS: '17' }),
     /increments/,

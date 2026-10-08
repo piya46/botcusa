@@ -21,6 +21,7 @@ export function AiReplyDetails({ message }: { message: Message }) {
     : [];
   const used = Array.isArray(meta.knowledge_used) ? meta.knowledge_used : [];
   const handover = Boolean(meta.handover);
+  const examples = Array.isArray(meta.response_examples) ? meta.response_examples : [];
   const direct = meta.model === 'approved-knowledge' && !handover;
   return (
     <details className="ai-reply-details">
@@ -37,6 +38,14 @@ export function AiReplyDetails({ message }: { message: Message }) {
       {handover && <p>{reasons[String(meta.handover_reason)] || 'ส่งให้เจ้าหน้าที่ดูแล'}</p>}
       {direct && <p>ใช้ข้อความฉบับเผยแพร่ ยังไม่ได้ปรับสำนวนด้วยโมเดล</p>}
       {meta.model === 'service-dialogue' && <p>คำตอบสนทนาเบื้องต้นของระบบ</p>}
+      {examples.length > 0 && (
+        <p>
+          <a href="/admin/training">ตัวอย่างวิธีตอบที่ส่งให้ Gemini {examples.length} รายการ</a>
+        </p>
+      )}
+      {meta.response_kind === 'clarify' && (
+        <p>กำลังเก็บรายละเอียดที่จำเป็นก่อนตอบหรือประสานเจ้าหน้าที่</p>
+      )}
       {typeof meta.model === 'string' &&
         !['approved-knowledge', 'service-dialogue'].includes(meta.model) && (
           <p>โมเดล: {meta.model}</p>

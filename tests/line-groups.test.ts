@@ -71,14 +71,14 @@ async function fixture(recipient = groupId) {
       payload,
     });
   };
-  const handover = async () => {
+  const handover = async (text = 'ขอคุยกับคน ส่งต่อเลย รายละเอียดส่วนตัว 0891234567') => {
     const event = {
       webhookEventId: randomUUID(),
       type: 'message',
       timestamp: Date.now(),
       source: { type: 'user', userId: 'U' + randomBytes(16).toString('hex') },
       replyToken: 'synthetic-reply',
-      message: { id: randomUUID(), type: 'text', text: 'ขอคุยกับคน รายละเอียดส่วนตัว 0891234567' },
+      message: { id: randomUUID(), type: 'text', text },
     };
     assert.equal((await sendEvent(event)).statusCode, 200);
     await worker.tick();
@@ -144,6 +144,29 @@ test('new handover sends a minimal group Push once; later messages do not re-ale
     assert.ok(result.jobs[0].accepted);
     assert.equal(result.jobs[0].last_error, null);
     assert.ok(!JSON.stringify(result).includes(f.config.lineToken));
+  } finally {
+    await f.close();
+  }
+});
+
+test('intake replies to the user first and alerts the group only once the case is handed over', async () => {
+  const f = await fixture();
+  try {
+    const { event, c } = await f.handover('ขอคุยกับคนครับ');
+    assert.equal(c.status, 'BOT');
+    assert.equal(f.calls.filter((call) => call.body.to === groupId).length, 0);
+    assert.ok(f.calls.some((call) => call.path.endsWith('/reply')));
+    await f.sendEvent({
+      ...event,
+      webhookEventId: randomUUID(),
+      message: { ...event.message, id: randomUUID(), text: 'ไม่สะดวกให้ข้อมูล ส่งต่อเลย' },
+    });
+    await f.worker.tick();
+    assert.equal(f.calls.filter((call) => call.body.to === groupId).length, 1);
+    assert.equal(
+      (await f.db.query('SELECT status FROM conversations WHERE id=$1', [c.id]))[0].status,
+      'WAITING_FOR_AGENT',
+    );
   } finally {
     await f.close();
   }

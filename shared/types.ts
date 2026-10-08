@@ -2,6 +2,7 @@ export type AgentRole = 'ADMIN' | 'AGENT' | 'REVIEWER';
 export type Agent = { id: string; name: string; email: string; role: AgentRole };
 export type StaffAccount = {
   agent: Agent;
+  publicDisplayName: string | null;
   demo: boolean;
   line: {
     userId: string | null;

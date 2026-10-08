@@ -24,6 +24,35 @@ export const accountLinePreference = z
   })
   .strict();
 export const accountLineRemoval = accountLinePreference.omit({ enabled: true });
+export const accountProfileBody = z
+  .object({
+    publicDisplayName: z
+      .string()
+      .trim()
+      .max(80)
+      .refine((s) => !/[\p{Cc}\p{Cf}]/u.test(s), 'ชื่อมีอักขระที่ไม่อนุญาต'),
+  })
+  .strict();
+
+export async function updateOwnProfile(
+  db: Database,
+  config: Config,
+  actor: AuthenticatedStaff,
+  input: z.infer<typeof accountProfileBody>,
+) {
+  await db.transaction(async (tx) => {
+    const [agent] = await tx.query('SELECT id FROM agents WHERE id=$1 AND active FOR UPDATE', [
+      actor.id,
+    ]);
+    if (!agent) throw new AppError(403, 'บัญชีถูกปิดใช้งาน');
+    await tx.query('UPDATE agents SET public_display_name=$2 WHERE id=$1', [
+      actor.id,
+      input.publicDisplayName || null,
+    ]);
+    await audit(tx, actor.id, 'STAFF_PUBLIC_NAME_UPDATED', 'agent', actor.id);
+  });
+  return staffAccount(db, config, actor);
+}
 
 export async function staffAccount(
   db: Queryable,
@@ -34,6 +63,7 @@ export async function staffAccount(
   if (!agent?.active) throw new AppError(403, 'บัญชีถูกปิดใช้งาน');
   return {
     agent: { id: actor.id, name: actor.name, email: actor.email, role: actor.role },
+    publicDisplayName: agent.public_display_name ?? null,
     demo: config.demo,
     line: {
       userId: agent.line_user_id,

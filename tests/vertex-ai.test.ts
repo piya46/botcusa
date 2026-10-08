@@ -12,8 +12,350 @@ import { defaultAiBehavior, type AiBehavior } from '../shared/ai.js';
 import { openDatabase } from './database.js';
 import { Worker } from '../server/worker.js';
 import { buildApp } from '../server/app.js';
-import { seed, DEMO_AGENTS } from '../server/seed.js';
+import { seed, DEMO_AGENTS as SEED_AGENTS } from '../server/seed.js';
+import type { Agent } from '../shared/types.js';
 import { encrypt, decrypt } from '../server/security.js';
+import {
+  createExample,
+  reviewExample,
+  revokeMessageData,
+  createDataset,
+  retireExample,
+} from '../server/training.js';
+import { findResponseExamples } from '../server/response-examples.js';
+import { claimCase } from '../server/conversations.js';
+const DEMO_AGENTS = SEED_AGENTS as Agent[];
+
+async function teachingExample(
+  f: Awaited<ReturnType<typeof fixture>>,
+  answer = 'อธิบายการสมัครทีละขั้น ถามว่าติดที่หน้าหรือขั้นตอนไหน',
+) {
+  const c = await f.waiting();
+  const [source] = await f.db.query(
+    "INSERT INTO messages(conversation_id,sender_type,encrypted_text,redacted_text) VALUES($1,'USER',$2,'สมัครสมาชิกมีปัญหา') RETURNING id",
+    [c.id, encrypt('สมัครสมาชิกมีปัญหา', f.config.encryptionKey)],
+  );
+  await f.db.query(
+    "INSERT INTO messages(conversation_id,sender_type,agent_id,encrypted_text,redacted_text,delivery_status) VALUES($1,'AGENT',$2,$3,$4,'ACCEPTED')",
+    [c.id, DEMO_AGENTS[2].id, encrypt(answer, f.config.encryptionKey), answer],
+  );
+  await f.db.query(
+    "UPDATE conversations SET status='CLOSED',closed_at=now(),resolution='RESOLVED_HUMAN' WHERE id=$1",
+    [c.id],
+  );
+  const example = await createExample(f.db, f.config, DEMO_AGENTS[2], c.id);
+  return { example, source };
+}
+
+test('approved examples enter live Gemini context, follow configured style, and remain separate from factual citations', async () => {
+  const f = await fixture();
+  try {
+    const { example, source } = await teachingExample(f);
+    const draft = await teachingExample(f, 'DRAFT_NOT_FOR_PROVIDER');
+    const rejected = await teachingExample(f, 'REJECTED_NOT_FOR_PROVIDER');
+    await reviewExample(f.db, DEMO_AGENTS[1], rejected.example.id, false);
+    assert.equal((await findResponseExamples(f.db, 'สมัครสมาชิกมีปัญหา')).length, 0);
+    await reviewExample(f.db, DEMO_AGENTS[1], example.id, true);
+    await f.behavior({ tone: 'formal', format: 'steps' });
+    f.decision({
+      action: 'clarify',
+      kind: 'general',
+      text: 'กรุณาระบุขั้นตอนที่พบปัญหาในการสมัครค่ะ',
+      reference_ids: [],
+      intake: { summary: 'ผู้ใช้แจ้งปัญหาการสมัคร', missing_fields: ['step', 'error'] },
+    });
+    const result = await f.say(await f.waiting(), 'สมัครสมาชิกมีปัญหา');
+    const call = f.calls.at(-1)!;
+    const payload = JSON.parse(call.body.contents[0].parts[0].text);
+    assert.equal(payload.response_examples.length, 1);
+    assert.equal(payload.response_examples[0].id, example.id);
+    assert.equal(
+      payload.response_examples[0].context,
+      undefined,
+      'never send full training conversations',
+    );
+    assert.ok(!JSON.stringify(payload).includes('NOT_FOR_PROVIDER'));
+    assert.match(
+      call.body.systemInstruction.parts[0].text,
+      /บุคลิกที่ตั้งไว้มีลำดับเหนือสำนวนตัวอย่าง/,
+    );
+    assert.match(call.body.systemInstruction.parts[0].text, /ไม่คัดลอกสำนวนต้นฉบับทั้งก้อน/);
+    assert.match(call.body.systemInstruction.parts[0].text, /เป็นทางการ/);
+    assert.match(result.reply.text, /กรุณาระบุ/);
+    assert.equal(result.reply.metadata.response_examples[0].id, example.id);
+    assert.deepEqual(result.reply.metadata.knowledge_used, []);
+    // An example ID can never authorize a factual answer.
+    f.decision({
+      action: 'answer',
+      kind: 'knowledge',
+      text: 'EXAMPLE_FACT_MUST_NOT_ESCAPE',
+      reference_ids: [example.id],
+    });
+    const invalid = await f.say(await f.waiting(), 'สมัครสมาชิกมีปัญหา');
+    assert.ok(!invalid.reply.text.includes('EXAMPLE_FACT'));
+    await f.behavior({ useApprovedExamples: false });
+    await f.say(await f.waiting(), 'สมัครสมาชิกมีปัญหา');
+    assert.deepEqual(
+      JSON.parse(f.calls.at(-1)!.body.contents[0].parts[0].text).response_examples,
+      [],
+    );
+    await f.behavior({ useApprovedExamples: true });
+    await f.db.query("UPDATE settings SET value=$1 WHERE key='training_policy'", [
+      JSON.stringify({ enabled: false, notice_version: 'test' }),
+    ]);
+    assert.deepEqual(await findResponseExamples(f.db, 'สมัครสมาชิกมีปัญหา'), []);
+    await f.db.query("UPDATE settings SET value=$1 WHERE key='training_policy'", [
+      JSON.stringify({ enabled: true, notice_version: 'test' }),
+    ]);
+    await f.db.transaction((tx) => revokeMessageData(tx, source.id));
+    assert.deepEqual(await findResponseExamples(f.db, 'สมัครสมาชิกมีปัญหา'), []);
+    assert.equal(
+      (await f.db.query('SELECT status FROM training_examples WHERE id=$1', [example.id]))[0]
+        .status,
+      'REVOKED',
+    );
+    assert.equal(
+      (await f.db.query('SELECT status FROM training_examples WHERE id=$1', [draft.example.id]))[0]
+        .status,
+      'DRAFT',
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test('example withdrawal while Gemini runs discards the answer; a retry uses fresh examples', async () => {
+  const f = await fixture();
+  try {
+    const { example, source } = await teachingExample(f);
+    await reviewExample(f.db, DEMO_AGENTS[1], example.id, true);
+    const c = await f.waiting();
+    f.beforeResponse(async () => {
+      await f.db.transaction((tx) => revokeMessageData(tx, source.id));
+    });
+    await assert.rejects(f.say(c, 'สมัครสมาชิกมีปัญหา'), /ตัวอย่างถูกถอน/);
+    assert.equal(
+      (
+        await f.db.query("SELECT id FROM messages WHERE conversation_id=$1 AND sender_type='BOT'", [
+          c.id,
+        ])
+      ).length,
+      0,
+    );
+    f.beforeResponse(undefined);
+    const [sourceMessage] = await f.db.query(
+      "SELECT id FROM messages WHERE conversation_id=$1 AND sender_type='USER'",
+      [c.id],
+    );
+    await f.worker.botReply(sourceMessage.id);
+    assert.equal(
+      (
+        await f.db.query("SELECT id FROM messages WHERE conversation_id=$1 AND sender_type='BOT'", [
+          c.id,
+        ])
+      ).length,
+      1,
+    );
+    assert.deepEqual(
+      JSON.parse(f.calls.at(-1)!.body.contents[0].parts[0].text).response_examples,
+      [],
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test('retiring an approved example stops live use and dataset export, with reviewer permissions', async () => {
+  const f = await fixture();
+  try {
+    const { example } = await teachingExample(f);
+    await reviewExample(f.db, DEMO_AGENTS[1], example.id, true);
+    const dataset = await createDataset(f.db, DEMO_AGENTS[1], 'synthetic');
+    await assert.rejects(retireExample(f.db, DEMO_AGENTS[2], example.id), /ผู้ตรวจทาน/);
+    await retireExample(f.db, DEMO_AGENTS[1], example.id);
+    assert.deepEqual(await findResponseExamples(f.db, 'สมัครสมาชิกมีปัญหา'), []);
+    const [item] = await f.db.query(
+      'SELECT * FROM dataset_items WHERE dataset_id=$1 AND example_id=$2',
+      [dataset.id, example.id],
+    );
+    assert.equal(item.snapshot, null);
+    assert.ok(item.revoked_at);
+  } finally {
+    await f.close();
+  }
+});
+
+test('staff intake keeps context, summarizes for the team, and acknowledges the chosen public name once', async () => {
+  const f = await fixture();
+  try {
+    const c = await f.waiting();
+    f.decision({
+      action: 'clarify',
+      kind: 'general',
+      text: 'เกิดปัญหาที่ขั้นตอนไหน และมีข้อความแจ้งอะไรบ้างคะ',
+      reference_ids: [],
+      intake: {
+        summary: 'ผู้ใช้ต้องการติดต่อเจ้าหน้าที่',
+        missing_fields: ['situation', 'step', 'error'],
+      },
+    });
+    const first = await f.say(c, 'ขอคุยกับเจ้าหน้าที่ครับ');
+    assert.equal(first.reply.metadata.handover, false);
+    assert.equal(first.reply.metadata.pending_handover_reason, 'USER_REQUEST');
+    f.decision({
+      action: 'clarify',
+      kind: 'general',
+      text: 'เริ่มพบปัญหาเมื่อไหร่ และลองทำอะไรแล้วบ้างคะ',
+      reference_ids: [],
+      intake: { summary: 'กดสมัครสมาชิกแล้วพบ Error 500', missing_fields: ['timing', 'attempts'] },
+    });
+    const second = await f.say(c, 'กดสมัครสมาชิกแล้วขึ้น Error 500 ครับ');
+    assert.equal(second.reply.metadata.response_kind, 'clarify');
+    assert.notEqual(second.reply.text, first.reply.text);
+    const secondPayload = JSON.parse(f.calls.at(-1)!.body.contents[0].parts[0].text);
+    assert.equal(secondPayload.handover_required, 'USER_REQUEST');
+    assert.ok(
+      secondPayload.history.some((m: any) => m.redacted_text.includes('ขอคุยกับเจ้าหน้าที่')),
+    );
+    f.decision({
+      action: 'handover',
+      kind: 'general',
+      text: '',
+      reference_ids: [],
+      intake: {
+        summary: 'สมัครสมาชิกพบ Error 500 เมื่อเช้านี้ ลองรีเฟรชแล้วไม่หาย',
+        missing_fields: [],
+      },
+    });
+    const third = await f.say(c, 'เมื่อเช้าครับ ลองรีเฟรชแล้วไม่หาย');
+    assert.equal(third.reply.metadata.handover, true);
+    assert.equal(third.reply.metadata.handover_reason, 'USER_REQUEST');
+    assert.match(third.reply.text, /เมื่อเจ้าหน้าที่รับดูแล/);
+    const [brief] = await f.db.query(
+      "SELECT * FROM messages WHERE conversation_id=$1 AND internal AND sender_type='SYSTEM'",
+      [c.id],
+    );
+    assert.match(decrypt(brief.encrypted_text, f.config.encryptionKey), /Error 500.*รีเฟรช/);
+    await f.db.query("UPDATE agents SET public_display_name='พี่ต้น ทีมบริการ' WHERE id=$1", [
+      DEMO_AGENTS[0].id,
+    ]);
+    await claimCase(f.db, f.config, DEMO_AGENTS[0], c.id);
+    await assert.rejects(claimCase(f.db, f.config, DEMO_AGENTS[0], c.id), /ผู้รับงานแล้ว/);
+    const claims = await f.db.query(
+      "SELECT * FROM messages WHERE conversation_id=$1 AND metadata->>'system_event'='CASE_CLAIMED'",
+      [c.id],
+    );
+    assert.equal(claims.length, 1);
+    assert.match(
+      decrypt(claims[0].encrypted_text, f.config.encryptionKey),
+      /พี่ต้น ทีมบริการ รับเรื่องแล้ว/,
+    );
+    assert.equal((await f.say(c, 'ขอบคุณ')).reply, undefined);
+    await f.db.transaction((tx) => revokeMessageData(tx, first.m.id));
+    const [withdrawnBrief] = await f.db.query('SELECT * FROM messages WHERE id=$1', [brief.id]);
+    assert.equal(
+      withdrawnBrief.encrypted_text,
+      null,
+      'intake summary is withdrawn with its source',
+    );
+    assert.ok(withdrawnBrief.withdrawn_at);
+  } finally {
+    await f.close();
+  }
+});
+
+test('complete reports, urgent requests and refusal do not create unnecessary intake rounds', async () => {
+  const f = await fixture();
+  try {
+    f.decision({
+      action: 'handover',
+      kind: 'general',
+      text: '',
+      reference_ids: [],
+      intake: {
+        summary:
+          'กดสมัครสมาชิกวันนี้แล้วขึ้น Error 500 ลองใหม่สองครั้งไม่สำเร็จ ต้องการเจ้าหน้าที่ตรวจสอบ',
+        missing_fields: [],
+      },
+    });
+    assert.equal(
+      (
+        await f.say(
+          await f.waiting(),
+          'ขอเจ้าหน้าที่ตรวจสอบ กดสมัครวันนี้ขึ้น Error 500 ลองใหม่สองครั้งแล้ว',
+        )
+      ).reply.metadata.handover,
+      true,
+    );
+    assert.equal(
+      (await f.say(await f.waiting(), 'ส่งต่อเลย ไม่ต้องถามครับ')).reply.metadata.handover,
+      true,
+    );
+    f.decision({ action: 'handover', kind: 'general', text: '', reference_ids: [] });
+    const c = await f.waiting();
+    assert.equal(
+      (await f.say(c, 'มีปัญหาครับ')).reply.metadata.response_kind,
+      'clarify',
+      'initial missing detail must be collected even if model skips it',
+    );
+    assert.equal((await f.say(c, 'ไม่ทราบครับ')).reply.metadata.handover, true);
+  } finally {
+    await f.close();
+  }
+});
+
+test('staff can change only their public display name without changing SSO name or roles', async () => {
+  const f = await fixture();
+  const app = await buildApp(f.db, f.config);
+  try {
+    const login = await app.inject({
+      method: 'POST',
+      url: '/api/auth/demo',
+      headers: { origin: f.config.origin },
+      payload: { agentId: DEMO_AGENTS[2].id },
+    });
+    const headers = {
+      origin: f.config.origin,
+      cookie: login.cookies.map((c) => `${c.name}=${c.value}`).join('; '),
+    };
+    const update = await app.inject({
+      method: 'PATCH',
+      url: '/api/account/profile',
+      headers,
+      payload: { publicDisplayName: '  พี่แนน  ' },
+    });
+    assert.equal(update.statusCode, 200, update.body);
+    assert.equal(update.json().publicDisplayName, 'พี่แนน');
+    const [staff] = await f.db.query('SELECT * FROM agents WHERE id=$1', [DEMO_AGENTS[2].id]);
+    assert.equal(staff.name, DEMO_AGENTS[2].name);
+    assert.equal(staff.role, 'AGENT');
+    for (const payload of [
+      { publicDisplayName: 'another', agentId: DEMO_AGENTS[0].id },
+      { publicDisplayName: 'another', role: 'ADMIN' },
+      { publicDisplayName: 'bad\nname' },
+      { publicDisplayName: 'x'.repeat(81) },
+    ])
+      assert.equal(
+        (await app.inject({ method: 'PATCH', url: '/api/account/profile', headers, payload }))
+          .statusCode,
+        400,
+      );
+    assert.equal(
+      (
+        await app.inject({
+          method: 'PATCH',
+          url: '/api/account/profile',
+          headers,
+          payload: { publicDisplayName: '' },
+        })
+      ).json().publicDisplayName,
+      null,
+    );
+  } finally {
+    await app.close();
+    await f.close();
+  }
+});
 
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), 'cusa-vertex-'));
@@ -34,6 +376,7 @@ async function fixture() {
     reference_ids: [],
   };
   let failureStatus = 0;
+  let beforeResponse: (() => Promise<void>) | undefined;
   const calls: { url: string; body: any; headers: any }[] = [];
   const fetcher = (async (url, init) => {
     calls.push({
@@ -43,6 +386,7 @@ async function fixture() {
     });
     if (failureStatus)
       return Response.json({ error: 'synthetic private provider body' }, { status: failureStatus });
+    await beforeResponse?.();
     return Response.json({
       candidates: [
         { finishReason: 'STOP', content: { parts: [{ text: JSON.stringify(decision) }] } },
@@ -92,6 +436,9 @@ async function fixture() {
     },
     failProvider: (status: number) => {
       failureStatus = status;
+    },
+    beforeResponse: (callback?: () => Promise<void>) => {
+      beforeResponse = callback;
     },
     close: async () => {
       await worker.stop();
@@ -366,17 +713,26 @@ test('strict mode, personal lookups, uncertain or fabricated citations and staff
   try {
     await f.behavior({ mode: 'knowledge_only' });
     let c = await f.waiting();
-    assert.equal((await f.say(c, 'คำถามที่ไม่มีข้อมูล zxzz')).reply.metadata.handover, true);
-    assert.equal(f.calls.length, 0);
+    assert.equal(
+      (await f.say(c, 'คำถามที่ไม่มีข้อมูล zxzz')).reply.metadata.response_kind,
+      'clarify',
+    );
     await f.behavior({ mode: 'conversational' });
     c = await f.waiting();
     assert.equal(
-      (await f.say(c, 'ตรวจสอบสถานะสมาชิกของฉัน')).reply.metadata.handover_reason,
+      (await f.say(c, 'ตรวจสอบสถานะสมาชิกของฉัน')).reply.metadata.pending_handover_reason,
       'VERIFICATION_REQUIRED',
     );
-    assert.equal(f.calls.length, 0);
     c = await f.waiting();
-    assert.equal((await f.say(c, 'ขอคุยกับคน')).reply.metadata.handover_reason, 'USER_REQUEST');
+    assert.equal(
+      (await f.say(c, 'ขอคุยกับคน')).reply.metadata.pending_handover_reason,
+      'USER_REQUEST',
+    );
+    assert.equal(
+      (await f.say(c, 'ขอคุยกับคน')).reply.metadata.handover_reason,
+      'USER_REQUEST',
+      'repeat request bypasses intake',
+    );
     f.decision({
       action: 'answer',
       kind: 'knowledge',
@@ -385,7 +741,7 @@ test('strict mode, personal lookups, uncertain or fabricated citations and staff
     });
     c = await f.waiting();
     const result = await f.say(c, 'กิจกรรม xyz จัดเมื่อไหร่');
-    assert.equal(result.reply.metadata.handover_reason, 'MODEL_UNCERTAIN');
+    assert.equal(result.reply.metadata.pending_handover_reason, 'MODEL_UNCERTAIN');
     assert.ok(!result.reply.text.includes('แต่งขึ้น'));
     await f.db.query(
       "UPDATE conversations SET status='AGENT_IN_CHARGE',assigned_agent_id=$2 WHERE id=$1",
@@ -436,11 +792,11 @@ test('basic conversation fallback follows the language setting without Vertex cr
     f.worker.config.vertexProject = '';
     const c = await f.waiting();
     const english = await f.say(c, 'I need help with something');
-    assert.match(english.reply.text, /Could you describe/);
+    assert.match(english.reply.text, /could you describe/i);
     assert.equal(f.calls.length, 0);
     await f.behavior({ language: 'th' });
-    const thai = await f.say(c, 'Still unclear');
-    assert.match(thai.reply.text, /ขอรายละเอียด/);
+    const thai = await f.say(await f.waiting(), 'Still unclear');
+    assert.match(thai.reply.text, /ขอทราบ/);
   } finally {
     await f.close();
   }
@@ -507,7 +863,7 @@ test('greetings work in knowledge-only mode without invoking Vertex or handing o
   }
 });
 
-test('exact published association question answers from knowledge on Vertex failure and records a safe diagnostic', async () => {
+test('live Vertex failure collects details without pasting published prose and records a safe diagnostic', async () => {
   const f = await fixture();
   try {
     await f.db.query("UPDATE knowledge SET status='ARCHIVED'");
@@ -521,9 +877,10 @@ test('exact published association question answers from knowledge on Vertex fail
     f.failProvider(403);
     const result = await f.say(await f.waiting(), title);
     assert.equal(result.reply.metadata.handover, false);
-    assert.equal(result.reply.text, content);
-    assert.equal(result.reply.metadata.model, 'approved-knowledge');
-    assert.deepEqual(result.reply.metadata.knowledge_used, [k.id]);
+    assert.notEqual(result.reply.text, content);
+    assert.equal(result.reply.metadata.response_kind, 'clarify');
+    assert.equal(result.reply.metadata.model, 'service-dialogue');
+    assert.deepEqual(result.reply.metadata.knowledge_used, []);
     assert.equal(result.reply.metadata.knowledge[0].title, title);
     assert.match(result.reply.metadata.provider_error, /HTTP 403/);
     assert.ok(!JSON.stringify(result.reply).includes('synthetic private provider body'));
@@ -538,14 +895,14 @@ test('exact published association question answers from knowledge on Vertex fail
       'BOT',
     );
     const unknown = await f.say(await f.waiting(), 'zzzxxyy');
-    assert.equal(unknown.reply.metadata.handover_reason, 'PROVIDER_ERROR');
+    assert.equal(unknown.reply.metadata.pending_handover_reason, 'PROVIDER_ERROR');
     assert.match(unknown.reply.metadata.provider_error, /HTTP 403/);
     await f.db.query('UPDATE knowledge SET published_content=$2 WHERE id=$1', [
       k.id,
       content.repeat(50),
     ]);
     const tooLong = await f.say(await f.waiting(), title);
-    assert.equal(tooLong.reply.metadata.handover_reason, 'PROVIDER_ERROR');
+    assert.equal(tooLong.reply.metadata.pending_handover_reason, 'PROVIDER_ERROR');
     assert.ok(tooLong.reply.text.length <= 4500, 'never queue an oversized raw fallback for LINE');
   } finally {
     await f.close();

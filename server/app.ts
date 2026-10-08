@@ -30,7 +30,13 @@ import {
   getMessages,
   sendAgentMessage,
 } from './conversations.js';
-import { createDataset, createExample, reviewExample, assertTrainingEnabled } from './training.js';
+import {
+  createDataset,
+  createExample,
+  reviewExample,
+  assertTrainingEnabled,
+  retireExample,
+} from './training.js';
 import { logoutStaff } from './staff-refresh.js';
 import { registerStaffSso, authenticateStaff } from './staff-sso.js';
 import { registerSso } from './sso.js';
@@ -62,6 +68,8 @@ import {
   accountLineBody,
   accountLinePreference,
   accountLineRemoval,
+  accountProfileBody,
+  updateOwnProfile,
 } from './staff-account.js';
 
 declare module 'fastify' {
@@ -251,6 +259,9 @@ export async function buildApp(
     agents: config.demo ? DEMO_AGENTS : undefined,
   }));
   app.get('/api/account', async (request) => staffAccount(db, config, actor(request)));
+  app.patch('/api/account/profile', async (request) =>
+    updateOwnProfile(db, config, actor(request), accountProfileBody.parse(request.body)),
+  );
   app.post(
     '/api/account/line',
     { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } },
@@ -573,6 +584,16 @@ export async function buildApp(
   app.get('/api/training', async () =>
     db.query(
       `SELECT t.*,c.number AS case_number,a.name AS created_by_name,r.name AS reviewed_by_name FROM training_examples t JOIN conversations c ON c.id=t.conversation_id JOIN agents a ON a.id=t.created_by LEFT JOIN agents r ON r.id=t.reviewed_by ORDER BY t.updated_at DESC LIMIT 200`,
+    ),
+  );
+  app.post('/api/training/:id/retire', async (request) =>
+    retireExample(
+      db,
+      actor(request),
+      z
+        .string()
+        .uuid()
+        .parse((request.params as { id: string }).id),
     ),
   );
   app.patch('/api/training/:id', async (request) => {

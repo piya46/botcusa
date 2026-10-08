@@ -434,7 +434,7 @@ function SelectedCase({
         <div className="message-timeline">
           <div className="timeline-date">{formatDate(c.created_at, true)}</div>
           {data.messages.map((m) =>
-            m.sender_type === 'SYSTEM' && m.internal ? (
+            m.sender_type === 'SYSTEM' && m.internal && m.metadata.system_event !== 'AI_INTAKE' ? (
               <div className="system-message" key={m.id}>
                 <CheckCircle2 size={12} />
                 {m.text}
@@ -451,7 +451,10 @@ function SelectedCase({
                   <div className="message-author">
                     {m.internal ? (
                       <>
-                        <LockKeyhole size={12} /> บันทึกภายใน · {m.agent_name?.split(' · ')[0]}
+                        <LockKeyhole size={12} /> บันทึกภายใน ·{' '}
+                        {m.metadata.system_event === 'AI_INTAKE'
+                          ? 'สรุปก่อนส่งต่อ'
+                          : m.agent_name?.split(' · ')[0]}
                       </>
                     ) : m.sender_type === 'BOT' ? (
                       <>

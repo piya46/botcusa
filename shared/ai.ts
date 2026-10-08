@@ -28,6 +28,7 @@ export interface AiBehavior {
   length: 'short' | 'balanced' | 'detailed';
   format: 'natural' | 'bullets' | 'steps';
   clarificationLimit: number;
+  useApprovedExamples: boolean;
 }
 export const defaultAiBehavior: AiBehavior = {
   mode: 'conversational',
@@ -36,4 +37,5 @@ export const defaultAiBehavior: AiBehavior = {
   length: 'short',
   format: 'natural',
   clarificationLimit: 2,
+  useApprovedExamples: true,
 };

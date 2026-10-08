@@ -8,6 +8,7 @@ export function AccountPage() {
   const account = useResource<StaffAccount>('/account');
   const [busy, setBusy] = useState(false),
     [removing, setRemoving] = useState(false);
+  const [publicName, setPublicName] = useState<string | null>(null);
   if (account.loading) return <Loading />;
   if (account.error) return <ErrorBox message={account.error} retry={account.reload} />;
   if (!account.data) return null;
@@ -57,6 +58,42 @@ export function AccountPage() {
             <ShieldCheck size={18} />
             <span>จัดการเคสและข้อมูลตามสิทธิ์ {role}</span>
           </div>
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              setBusy(true);
+              try {
+                await patch('/account/profile', {
+                  publicDisplayName: publicName ?? data.publicDisplayName ?? '',
+                });
+                await account.reload();
+                setPublicName(null);
+                notify('บันทึกชื่อแสดงผลแล้ว');
+              } catch (error) {
+                notify((error as Error).message, 'error');
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            <label>
+              ชื่อที่แนะนำตัวเมื่อรับเคส
+              <input
+                maxLength={80}
+                value={publicName ?? data.publicDisplayName ?? ''}
+                placeholder={data.agent.name}
+                onChange={(e) => setPublicName(e.target.value)}
+              />
+            </label>
+            <p className="muted small-text">เว้นว่างเพื่อใช้ชื่อจาก SSO</p>
+            <div className="form-info">
+              เจ้าหน้าที่ {(publicName ?? data.publicDisplayName)?.trim() || data.agent.name}{' '}
+              รับเรื่องแล้วค่ะ กำลังตรวจสอบข้อมูลให้
+            </div>
+            <button className="button primary" disabled={busy || publicName === null}>
+              บันทึกชื่อแสดงผล
+            </button>
+          </form>
         </section>
         <section className="panel settings-panel">
           <div className="panel-heading">

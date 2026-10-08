@@ -9,6 +9,7 @@ const account = (sameProvider: boolean): StaffAccount => ({
     role: 'ADMIN',
   },
   demo: false,
+  publicDisplayName: null,
   line: {
     userId: 'U' + 'a'.repeat(32),
     source: sameProvider ? 'SSO' : 'OA_LINK',
@@ -17,6 +18,35 @@ const account = (sameProvider: boolean): StaffAccount => ({
   },
   lineManagedBySso: sameProvider,
   canLinkLine: !sameProvider,
+});
+
+test('staff can preview and save their public case greeting name on mobile', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  let data = account(true);
+  await page.route('**/api/account', (route) => route.fulfill({ json: data }));
+  await page.route('**/api/account/profile', async (route) => {
+    expect(route.request().method()).toBe('PATCH');
+    expect(route.request().postDataJSON()).toEqual({ publicDisplayName: 'พี่ต้น ทีมบริการ' });
+    data = { ...data, publicDisplayName: 'พี่ต้น ทีมบริการ' };
+    await route.fulfill({ json: data });
+  });
+  await page.goto('/admin/account');
+  await page.getByLabel('ชื่อที่แนะนำตัวเมื่อรับเคส').fill('พี่ต้น ทีมบริการ');
+  await expect(
+    page.getByText('เจ้าหน้าที่ พี่ต้น ทีมบริการ รับเรื่องแล้วค่ะ กำลังตรวจสอบข้อมูลให้', {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page.getByRole('button', { name: 'บันทึกชื่อแสดงผล' }).click();
+  await expect(page.getByRole('button', { name: 'บันทึกชื่อแสดงผล' })).toBeDisabled();
+  await page.reload();
+  await expect(page.getByLabel('ชื่อที่แนะนำตัวเมื่อรับเคส')).toHaveValue('พี่ต้น ทีมบริการ');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({
+    path: 'artifacts/account-public-name-mobile.png',
+    fullPage: true,
+    animations: 'disabled',
+  });
 });
 
 test('same Provider shows SSO-managed LINE without self-service replace or unlink', async ({

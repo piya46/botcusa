@@ -49,10 +49,17 @@ export async function systemMessage(
   conversationId: string,
   text: string,
   actorId?: string,
+  metadata: Record<string, unknown> = {},
 ) {
   await db.query(
-    `INSERT INTO messages(conversation_id,sender_type,agent_id,encrypted_text,redacted_text,internal) VALUES($1,'SYSTEM',$2,$3,$4,true)`,
-    [conversationId, actorId ?? null, encrypt(text, config.encryptionKey), text],
+    `INSERT INTO messages(conversation_id,sender_type,agent_id,encrypted_text,redacted_text,internal,metadata) VALUES($1,'SYSTEM',$2,$3,$4,true,$5)`,
+    [
+      conversationId,
+      actorId ?? null,
+      encrypt(text, config.encryptionKey),
+      text,
+      JSON.stringify(metadata),
+    ],
   );
 }
 export async function claimCase(
@@ -107,8 +114,22 @@ export async function claimCase(
       [id, actor.id, c.routing_version],
     );
     await systemMessage(tx, config, id, `${actor.name} รับเรื่องแล้ว`, actor.id);
-    const text =
-      'ขณะนี้มีเจ้าหน้าที่รับเรื่องแล้ว กรุณารอสักครู่ เจ้าหน้าที่กำลังตรวจสอบข้อมูลให้ค่ะ';
+    const publicName = staff.public_display_name || staff.name;
+    const [lastReply] = await tx.query(
+      "SELECT metadata FROM messages WHERE conversation_id=$1 AND sender_type='BOT' AND withdrawn_at IS NULL ORDER BY sequence DESC LIMIT 1",
+      [id],
+    );
+    const [lastUser] = await tx.query(
+      "SELECT redacted_text FROM messages WHERE conversation_id=$1 AND sender_type='USER' AND withdrawn_at IS NULL ORDER BY sequence DESC LIMIT 1",
+      [id],
+    );
+    const language = lastReply?.metadata?.ai_behavior?.language;
+    const english =
+      language === 'en' ||
+      (language === 'auto' && lastUser && /^[\x00-\x7f]+$/.test(lastUser.redacted_text));
+    const text = english
+      ? `${publicName} has taken your case and is reviewing the details. Please wait a moment.`
+      : `เจ้าหน้าที่ ${publicName} รับเรื่องแล้วค่ะ กำลังตรวจสอบข้อมูลให้ กรุณารอสักครู่นะคะ`;
     const [message] = await tx.query(
       `INSERT INTO messages(conversation_id,sender_type,agent_id,encrypted_text,redacted_text,delivery_status,internal,metadata)
       VALUES($1,'SYSTEM',$2,$3,$4,'QUEUED',false,$5) RETURNING id`,
@@ -117,7 +138,11 @@ export async function claimCase(
         actor.id,
         encrypt(text, config.encryptionKey),
         text,
-        JSON.stringify({ system_event: 'CASE_CLAIMED', routing_version: c.routing_version }),
+        JSON.stringify({
+          system_event: 'CASE_CLAIMED',
+          routing_version: c.routing_version,
+          public_display_name: publicName,
+        }),
       ],
     );
     await enqueue(tx, 'DELIVERY', { messageId: message.id }, `delivery:${message.id}`);

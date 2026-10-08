@@ -80,7 +80,7 @@ export function KnowledgePage({ agent }: { agent: Agent }) {
         </div>
         <div>
           <h3>ตรวจทานก่อนเผยแพร่</h3>
-          <p>AI ใช้ฉบับเผยแพร่ประกอบคำตอบ · ไม่ใช่การฝึกโมเดล</p>
+          <p>เขียนความรู้ด้วยภาษาของคุณ · Gemini ใช้ฉบับเผยแพร่อ้างอิงและเรียบเรียงตามบุคลิก</p>
         </div>
         <div className="knowledge-count">
           <strong>
@@ -884,7 +884,7 @@ export function SettingsPage() {
                 <label key={key}>
                   {field.label}
                   <select
-                    value={behavior[key as keyof AiBehavior]}
+                    value={behavior[key as keyof typeof aiBehaviorOptions]}
                     onChange={(e) => setBehavior((b) => ({ ...b, [key]: e.target.value }))}
                   >
                     {Object.entries(field.options).map(([value, label]) => (
@@ -899,7 +899,6 @@ export function SettingsPage() {
                 ถามรายละเอียดเพิ่มได้
                 <select
                   value={behavior.clarificationLimit}
-                  disabled={behavior.mode === 'knowledge_only'}
                   onChange={(e) =>
                     setBehavior((b) => ({ ...b, clarificationLimit: Number(e.target.value) }))
                   }
@@ -912,6 +911,20 @@ export function SettingsPage() {
                 </select>
               </label>
             </div>
+            <label className="switch-row">
+              <div>
+                <strong>ใช้ตัวอย่างวิธีตอบที่อนุมัติ</strong>
+                <span>เลือกตัวอย่างที่เกี่ยวข้อง แล้วปรับสำนวนตามบุคลิกนี้</span>
+              </div>
+              <input
+                type="checkbox"
+                className="switch"
+                checked={behavior.useApprovedExamples}
+                onChange={(e) =>
+                  setBehavior((b) => ({ ...b, useApprovedExamples: e.target.checked }))
+                }
+              />
+            </label>
             <p className="muted small-text">
               มีผลกับข้อความถัดไป · Vertex AI {data.integrations.aiModel || '(ยังไม่ตั้งโมเดล)'}
             </p>
@@ -935,7 +948,7 @@ export function SettingsPage() {
               <div>
                 <h2>
                   <ShieldCheck size={19} />
-                  การเตรียมชุดข้อมูลฝึก
+                  สอน AI จากบทสนทนา
                 </h2>
                 <p>กำหนดวัตถุประสงค์และการใช้งานข้อมูลก่อนเริ่มคัดเลือก</p>
               </div>
@@ -943,7 +956,7 @@ export function SettingsPage() {
             <label className="switch-row">
               <div>
                 <strong>เปิดใช้งาน Training Studio</strong>
-                <span>สร้างและอนุมัติตัวอย่างฝึก</span>
+                <span>คัดเลือก ตรวจทาน และใช้ตัวอย่างประกอบคำตอบ Gemini</span>
               </div>
               <input
                 type="checkbox"

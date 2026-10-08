@@ -13,6 +13,7 @@ const table = (name: string, fields: string[]) =>
 
 // Checked through information_schema so upgrades work on both MySQL and MariaDB.
 export const mysqlAddColumns = [
+  ['agents', 'public_display_name', 'VARCHAR(80)'],
   ['users', 'line_display_name', 'VARCHAR(255)'],
   ['users', 'line_profile_checked_at', 'DATETIME(3)'],
   ['agents', 'line_identity_source', 'VARCHAR(20)'],

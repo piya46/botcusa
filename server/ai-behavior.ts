@@ -9,6 +9,7 @@ export const aiBehaviorSchema = z
     length: z.enum(['short', 'balanced', 'detailed']),
     format: z.enum(['natural', 'bullets', 'steps']),
     clarificationLimit: z.number().int().min(1).max(3),
+    useApprovedExamples: z.boolean().default(true),
   })
   .strict();
 export async function loadAiBehavior(db: Queryable): Promise<AiBehavior> {
@@ -70,5 +71,33 @@ export const conversationDecision = z
     kind: z.enum(['general', 'knowledge']),
     text: z.string().trim().max(4000),
     reference_ids: z.array(z.string().uuid()).max(3),
+    intake: z
+      .object({
+        summary: z.string().trim().max(1600),
+        missing_fields: z
+          .array(z.enum(['situation', 'step', 'error', 'timing', 'attempts']))
+          .max(5),
+      })
+      .optional(),
   })
   .strict();
+
+export function replyInEnglish(question: string, b: AiBehavior) {
+  return b.language === 'en' || (b.language === 'auto' && /^[\x00-\x7f]+$/.test(question));
+}
+
+export function intakeQuestion(question: string, b: AiBehavior) {
+  if (replyInEnglish(question, b))
+    return 'Before I pass this to our staff, could you describe what happened, which step failed, and any error shown? Share only what you know; please leave out passwords and one-time codes.';
+  return b.tone === 'formal'
+    ? 'ก่อนประสานเจ้าหน้าที่ กรุณาแจ้งเหตุการณ์ ขั้นตอนที่พบปัญหา และข้อความผิดพลาดเท่าที่ทราบ โดยไม่ส่งรหัสผ่านหรือ OTP ค่ะ'
+    : 'ก่อนส่งต่อ ขอทราบว่าเกิดอะไรขึ้น ติดตรงขั้นตอนไหน และมีข้อความแจ้งอะไรบ้างคะ เล่าเท่าที่ทราบได้เลย ไม่ต้องส่งรหัสผ่านหรือ OTP นะคะ';
+}
+
+export function handoverReply(question: string, b: AiBehavior) {
+  if (replyInEnglish(question, b))
+    return 'Your request is in the staff queue. Please wait a moment; we’ll let you know when someone takes your case.';
+  return b.tone === 'formal'
+    ? 'รับเรื่องเข้าคิวเจ้าหน้าที่แล้ว กรุณารอสักครู่ ระบบจะแจ้งเมื่อมีเจ้าหน้าที่รับดูแลค่ะ'
+    : 'ส่งเรื่องให้ทีมแล้วค่ะ รอสักครู่นะคะ จะแจ้งให้ทราบเมื่อเจ้าหน้าที่รับดูแลค่ะ';
+}

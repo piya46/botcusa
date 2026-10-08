@@ -211,7 +211,7 @@ test('webhook verifies exact raw bytes and deduplicates redelivery before acknow
     type: 'message',
     source: { type: 'user', userId: 'U' + randomBytes(16).toString('hex') },
     timestamp: Date.now(),
-    message: { id: randomUUID(), type: 'text', text: 'ขอติดต่อเจ้าหน้าที่' },
+    message: { id: randomUUID(), type: 'text', text: 'ขอติดต่อเจ้าหน้าที่ ส่งต่อเลย' },
   };
   const payload = JSON.stringify({ events: [event] }, null, 2),
     signature = createHmac('sha256', config.lineSecret).update(payload).digest('base64');
